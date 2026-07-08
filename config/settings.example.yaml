@@ -1,0 +1,90 @@
+# AutoCovered 配置模板
+# 使用:复制为 settings.yaml 后填入真实值。settings.yaml 已被 gitignore,
+# 所有秘密(topic 名/token/key)只放 settings.yaml,不要提交到 git。
+
+brokers:
+  primary: ibkr_gateway        # 主数据源:ibkr_gateway(实时 Greeks + 下单)
+  fallback: ""                 # 备用数据源:snaptrade(配置好 snaptrade 段后填入)
+  fallback_after_failures: 3   # 主源连续失败 N 轮后切备源
+
+ibkr:
+  host: 127.0.0.1
+  port: 7497                   # 7497=TWS paper / 7496=TWS live / 4002=GW paper / 4001=GW live
+  client_id: 11                # watcher 专用;roll 脚本自动用 client_id+1
+  account: ""
+  market_data_type: 1          # 1=实时(需订阅) 2=frozen 3=延迟15分钟
+
+snaptrade:                     # 备胎:两家券商统一只读快照(pip install snaptrade-python-sdk)
+  client_id: ""
+  consumer_key: ""
+  user_id: ""
+  user_secret: ""
+  account_ids: []              # 留空 = 全部已连接账户
+
+schwab:                        # 二期:schwab-py 直连(注意 7 天 refresh token)
+  enabled: false
+
+watcher:
+  interval_seconds: 300        # 行情周期
+  tick_seconds: 5              # 命令队列轮询粒度(手机批准的响应速度)
+  run_when_closed: false
+  calendar: NYSE
+
+notify:
+  provider: ntfy               # ntfy(双向,推荐) | bark(单向) | none
+  ntfy:
+    server: https://ntfy.sh    # 或自托管
+    topic_alerts: "CHANGE-ME-alerts-abc123"    # 改成随机长字符串(等于密码!)
+    topic_commands: "CHANGE-ME-cmd-abc123"
+    token: ""                  # 自托管/付费版访问令牌,可空
+  bark:
+    server: https://api.day.app
+    device_key: ""
+    group: covered-call
+  mirror_bark: false           # ntfy 之外同时镜像一份到 Bark
+
+alerts:                        # 状态机阈值(见 src/engine/state_machine.py)
+  profit_take_pct: 0.50        # 🟢 已赚回权利金比例
+  manage_dte: 21               # 🟡 管理窗口(50–75% 止盈或 21 DTE,躲 gamma)
+  tested_distance_pct: 0.03    # 🟡 距 strike 百分比
+  tested_delta: 0.45
+  option_loss_multiple: 2.0    # 🟡 call 腿止损线:买回成本 ≥ N × 开仓权利金
+  roll_delta: 0.60             # 🟠 roll 窗口
+  roll_dte_min: 14
+  roll_dte_max: 30
+  expiring_dte: 7              # 🟡 临近到期(每日提醒)
+  event_warn_days: 3           # 🟠 财报/除息提前告警天数
+  exdiv_delta: 0.40
+
+qcc:                           # 开仓硬规则(简化版内部纪律,非完整 IRS 定义)
+  min_open_dte: 31
+  target_delta_min: 0.20
+  target_delta_max: 0.30
+  coverage_ratio: 1.0
+
+tickers:                       # per-ticker 覆盖(高波动股降 delta + 部分覆盖)
+  NVDA: { coverage_ratio: 0.5, target_delta_min: 0.15, target_delta_max: 0.20 }
+  TSLA: { coverage_ratio: 0.5, target_delta_min: 0.15, target_delta_max: 0.20 }
+
+roll:
+  target_dte_min: 30
+  target_dte_max: 60
+  max_delta: 0.35
+  min_net_credit: 0.0          # 只做 net credit
+  allow_debit_for_improvement: false
+  min_strike_improvement_pct: 0.03
+  max_debit_per_share: 0.50
+
+execution:                     # 半自动执行(B 模式)— 默认三重关闭
+  enabled: false               # 总开关:false = 纯决策支持,批准也不执行
+  dry_run: true                # true = 批准后只模拟成交
+  propose_rolls: true          # ROLL_WINDOW/BREACHED 时自动生成提案(带批准按钮)
+  proposal_ttl_minutes: 30
+  max_orders_per_day: 5
+
+claude:                        # 防失控三保险
+  binary: claude
+  daily_call_limit: 10
+  dedup_window_minutes: 60
+  timeout_seconds: 300
+  trigger_states: [TESTED, ROLL_WINDOW, BREACHED]

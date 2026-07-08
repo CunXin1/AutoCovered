@@ -1,0 +1,16 @@
+# 个人数据与秘密 — 绝不提交
+config/settings.yaml
+config/lots.yaml
+state/*
+!state/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# 本地杂项
+*.log
+.claude/settings.local.json

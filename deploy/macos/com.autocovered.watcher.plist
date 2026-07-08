@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.autocovered.watcher</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>src.watcher</string>
+    </array>
+    <key>WorkingDirectory</key><string>/PATH/TO/AutoCovered</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/PATH/TO/AutoCovered/state/watcher.stdout.log</string>
+    <key>StandardErrorPath</key><string>/PATH/TO/AutoCovered/state/watcher.stderr.log</string>
+</dict>
+</plist>

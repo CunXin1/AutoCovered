@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.autocovered.daily</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>src.run_task</string>
+        <string>daily</string>
+    </array>
+    <key>WorkingDirectory</key><string>/PATH/TO/AutoCovered</string>
+    <!-- 工作日 6:15 本地时间;run_task 内部有交易日门禁 -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer></dict>
+    </array>
+    <key>StandardOutPath</key><string>/PATH/TO/AutoCovered/state/daily.log</string>
+    <key>StandardErrorPath</key><string>/PATH/TO/AutoCovered/state/daily.log</string>
+</dict>
+</plist>

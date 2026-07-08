@@ -1,0 +1,16 @@
+# 核心
+ib_async>=1.0.1
+PyYAML>=6.0
+requests>=2.31
+pandas>=2.0
+pandas_market_calendars>=4.3
+yfinance>=0.2.40
+
+# 测试
+pytest>=8.0
+
+# 可选:备用数据源(brokers.fallback: snaptrade 时安装)
+# snaptrade-python-sdk>=11.0
+
+# 可选:Schwab 直连(二期)
+# schwab-py>=1.4

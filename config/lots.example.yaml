@@ -1,0 +1,6 @@
+# 每只股票的建仓日期(broker API 不返回;用于长期资本利得倒计时)
+# 复制为 lots.yaml 后按实际填写(lots.yaml 已 gitignore)。
+# 多批次买入时填最早/主要批次;二期可换 IBKR Flex Query 自动拉取。
+#
+# NVDA: 2025-10-01
+# MSFT: 2024-03-15

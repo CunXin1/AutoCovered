@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "Bash(python .claude/skills/covered-call/scripts/roll_candidates.py:*)"
+    ]
+  }
+}
