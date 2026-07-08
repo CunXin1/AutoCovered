@@ -27,12 +27,12 @@ launchctl load ~/Library/LaunchAgents/com.autocovered.*.plist
 
 注意:headless Mac 需在"节能"里关闭睡眠;IB Gateway 建议配 IBC 自动重登。
 
-## 方式二:在 Claude Code 窗口里管理定时任务
+## 方式二:Claude Code 定时任务(推荐,在窗口里管理)
 
-不想用 OS 调度器的话,晨报/周报也可以交给 Claude Code 的定时任务
-(在 Claude Code 会话里说"帮我建一个每个交易日早上 6:15 跑
-`python -m src.run_task daily` 的定时任务"即可,它会用 Cron 工具创建;
-watcher 是常驻进程,仍需 OS 级注册)。
+晨报/盘中击穿巡检/周报都有现成的"面向 Claude 的指令"放在 `routines/` 目录,
+注册方法见 [`routines/README.md`](../routines/README.md)(Desktop → Routines →
+New → **Local**)。注意别和方式一对同一任务重复注册,会推送两遍;
+watcher 常驻进程仍建议用 OS 级注册。
 
 日常交互(不需要任何调度器):直接在本仓库开 Claude Code 会话问
 "看一下持仓状态"/"给我跑一份晨报"/"NVDA 那个 call 现在怎么样",

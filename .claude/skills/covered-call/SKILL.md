@@ -34,6 +34,15 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 
 如果 positions.json 的 updated_at 距现在超过 15 分钟(盘中),先声明数据可能过期。
 
+## 可用工具(已在权限白名单)
+
+- 刷新实时数据:`python -m src.watcher --once --no-trigger`
+  (需 IB Gateway 在线;失败就用现有 state 并声明数据时间,不要编造)
+- 推送到手机:`python .claude/skills/covered-call/scripts/notify.py
+  --title "<一句话>" --body-file <文件> --severity <0-4>`
+  (severity:🔴4 🟠3 🟡/默认2;正文长时先 Write 到 state/analysis/ 再用 --body-file)
+- 分析存档:Write 到 `state/analysis/`(命名 `YYYY-MM-DD-<主题>.md`)
+
 ## 输出格式
 
 - 中文,结论先行;**第一行是一句话总结**(会被用作手机推送标题)

@@ -5,7 +5,10 @@
       "Glob",
       "Grep",
       "WebSearch",
-      "Bash(python .claude/skills/covered-call/scripts/roll_candidates.py:*)"
+      "Write(state/analysis/**)",
+      "Bash(python .claude/skills/covered-call/scripts/roll_candidates.py:*)",
+      "Bash(python .claude/skills/covered-call/scripts/notify.py:*)",
+      "Bash(python -m src.watcher --once --no-trigger)"
     ]
   }
 }

@@ -78,7 +78,11 @@ python -m src.watcher --once                             # 单轮冒烟(需 IB G
 
 本仓库自带 `covered-call` skill。在仓库目录开 Claude Code 直接说:
 "看一下持仓状态" / "跑一份晨报" / "NVDA 那条 call 现在该不该 roll"。
-定时任务既可用 OS 调度器,也可让 Claude Code 建 cron(见 deploy/README.md)。
+
+**Claude Code 定时任务**:`routines/` 目录有三份面向 Claude 的任务指令 —
+晨报(交易日 6:15)、盘中击穿/roll 巡检(每 2 小时,有风险才推送)、周报(周日)。
+注册方法见 [`routines/README.md`](routines/README.md);传统 OS 调度器路线见
+[`deploy/README.md`](deploy/README.md),二选一即可。
 
 ## 免责声明
 

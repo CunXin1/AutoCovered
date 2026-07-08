@@ -38,8 +38,9 @@ PROPOSAL_STATES = {PositionState.ROLL_WINDOW, PositionState.BREACHED}
 
 
 class Watcher:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, enable_trigger: bool = True):
         self.cfg = cfg
+        self.enable_trigger = enable_trigger  # False = 供 Claude 定时任务内部刷新,避免嵌套调用 claude
         w = cfg.get("watcher") or {}
         self.interval = int(w.get("interval_seconds", 300))
         self.tick = int(w.get("tick_seconds", 5))
@@ -111,7 +112,8 @@ class Watcher:
             if res.state in PROPOSAL_STATES:
                 self._maybe_propose_roll(pos, today)
 
-            self.trigger.maybe_trigger(pos, res)
+            if self.enable_trigger:
+                self.trigger.maybe_trigger(pos, res)
 
         self.store.write_positions(positions, results, data_source=source)
         self.store.save_notify_log(notify_log)
@@ -280,7 +282,9 @@ class Watcher:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--once", action="store_true", help="单轮冒烟测试后退出")
+    ap.add_argument("--once", action="store_true", help="单轮后退出(冒烟测试/Claude 定时任务刷新)")
+    ap.add_argument("--no-trigger", action="store_true",
+                    help="跳过 Claude 深度分析触发(Claude 会话内刷新数据时用,避免嵌套)")
     args = ap.parse_args(argv)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -293,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         ],
     )
     cfg = load_config()
-    Watcher(cfg).loop(once=args.once)
+    Watcher(cfg, enable_trigger=not args.no_trigger).loop(once=args.once)
     return 0
 
 
