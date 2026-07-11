@@ -46,7 +46,8 @@ and — only after you tap **Approve** — can place net-credit roll orders (off
 | ⚪ ON_TRACK | 默认 | 静默 |
 
 内置纪律(可配置):只卖 OTM + DTE>30(QCC 税务合规)、roll 只做 net credit、
-到期不跨财报、高波动股部分覆盖 + 低 delta、未满一年持仓标注长期资本利得倒计时。
+跨财报到期需超远 OTM(delta≤0.08 且距现价≥20%,候选带 ⚠️ 标记)、
+高波动股部分覆盖 + 低 delta、未满一年持仓标注长期资本利得倒计时。
 
 ## 快速开始
 

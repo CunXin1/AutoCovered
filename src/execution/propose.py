@@ -216,6 +216,9 @@ def main(argv: list[str] | None = None) -> int:
         f"· 年化 {cand.net_credit_annualized_pct:.1%}\n"
         f"覆盖率: 持股 {qty:g} × {qcc.coverage_ratio:g} − 空头 {shorts} − 待批 {pending}\n"
     )
+    if cand.crosses_earnings:
+        body += (f"⚠️ 到期跨财报(已按收紧规则过滤:Δ≤{qcc.earnings_max_delta:g} "
+                 f"且距现价 ≥{qcc.earnings_min_otm_pct:.0%},被叫走概率极低但非零)\n")
     if p.rationale:
         body += f"依据: {p.rationale}\n"
     body += (f"{args.ttl} 分钟内有效。批准后 {mode}。\n"

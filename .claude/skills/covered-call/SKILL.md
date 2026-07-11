@@ -15,7 +15,9 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 - 开仓目标 delta 见 config/settings.yaml 的 qcc 段(默认 0.20–0.30);
   高波动股(NVDA/TSLA 等)看 tickers 段的 per-ticker 覆盖(更低 delta + 部分覆盖)
 - roll 只做 net credit,除非 strike 改善显著(以 roll 段配置为准)
-- 到期日不得横跨财报日
+- 到期日跨财报默认排除;例外仅当 delta ≤ earnings_max_delta(默认 0.08)
+  **且**距现价 ≥ earnings_min_otm_pct(默认 +20%)——引擎强制过滤,
+  此类候选带 ⚠️跨财报 标记,分析和推送时必须显式提示
 - 管理纪律:50–75% 最大利润止盈,或 21 DTE 收尾,先到者为准
 - 持仓未满 1 年的股票,报告中必须标注"距长期资本利得剩 X 天"(metrics.days_to_long_term)
 - **任何 roll/买回建议必须同时给三个选项:roll / 买回 / 让股票被叫走**,

@@ -47,15 +47,48 @@ def test_dte_window_and_otm_and_delta_filters():
     assert [c.strike for c in out] == [110]
 
 
-def test_earnings_exclusion():
-    chain = [q(45, 110, 6.2, 6.6, 0.30)]
-    out = find_roll_candidates(**CURRENT, chain=chain, today=TODAY, cfg=CFG,
-                               earnings_date=TODAY + timedelta(days=40))
+def test_earnings_crossing_tightened_not_banned():
+    """跨财报不再一刀切:delta ≤ earnings_max_delta 且 OTM ≥ +20% 才放行。"""
+    earnings = TODAY + timedelta(days=40)
+    # 常规 delta(0.30)跨财报 → 拒绝(必须 ≤ 0.08)
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.30)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
     assert out == []
-    # 财报在到期之后则不影响
-    out2 = find_roll_candidates(**CURRENT, chain=chain, today=TODAY, cfg=CFG,
+    # delta 0.05 但 OTM 只有 +4.8%(110/105)→ 距离不够,拒绝
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.05)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
+    assert out == []
+    # 缺 delta 跨财报 → 无法验证安全性,拒绝
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 130, 6.2, 6.6, None)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
+    assert out == []
+    # delta 0.05 且 strike 130 ≥ 105×1.2=126 → 放行并打标
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 130, 6.2, 6.6, 0.05)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
+    assert len(out) == 1 and out[0].crosses_earnings
+    assert "跨财报" in out[0].summary()
+    # 财报在到期之后 → 常规规则,不打标
+    out2 = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.30)],
+                                today=TODAY, cfg=CFG,
                                 earnings_date=TODAY + timedelta(days=50))
-    assert len(out2) == 1
+    assert len(out2) == 1 and not out2[0].crosses_earnings
+
+
+def test_open_candidates_earnings_crossing():
+    earnings = TODAY + timedelta(days=40)
+    chain = [
+        q(45, 130, 0.5, 0.7, 0.06),   # ✓ delta≤0.08 且 130 ≥ 126(105×1.2)
+        q(45, 132, 0.6, 0.8, 0.12),   # delta 0.12 > 0.08 ✗
+        q(45, 120, 0.8, 1.0, 0.05),   # OTM +14% < +20% ✗
+        q(45, 131, 0.5, 0.7, None),   # 缺 delta ✗
+    ]
+    out = find_open_candidates(stock_price=105.0, chain=chain, today=TODAY,
+                               qcc=QCC, earnings_date=earnings)
+    assert [c.strike for c in out] == [130]
+    assert out[0].crosses_earnings
+    # 不跨财报时常规区间照旧,且低于区间下限(0.20)的 delta 不再入选
+    out2 = find_open_candidates(stock_price=105.0, chain=chain, today=TODAY, qcc=QCC)
+    assert out2 == []   # 0.06/0.12/0.05 都低于默认区间 0.20–0.30
 
 
 def test_debit_for_improvement():

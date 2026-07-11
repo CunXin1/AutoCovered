@@ -62,6 +62,9 @@ qcc:                           # 开仓硬规则(简化版内部纪律,非完整
   target_delta_min: 0.20
   target_delta_max: 0.30
   coverage_ratio: 1.0
+  # 跨财报不禁止,但必须离得特别远:delta ≤ 此值 且 距现价 ≥ 此百分比
+  earnings_max_delta: 0.08
+  earnings_min_otm_pct: 0.20
 
 styles:                        # 开仓风格预设(propose / roll_candidates --style)
   conservative: { target_delta_min: 0.15, target_delta_max: 0.25 }
@@ -80,6 +83,8 @@ roll:
   allow_debit_for_improvement: false
   min_strike_improvement_pct: 0.03
   max_debit_per_share: 0.50
+  earnings_max_delta: 0.08     # 跨财报 roll 同规则:超远 OTM 才放行
+  earnings_min_otm_pct: 0.20
 
 execution:                     # 半自动执行(B 模式)— 默认三重关闭
   enabled: false               # 总开关:false = 纯决策支持,批准也不执行

@@ -92,6 +92,10 @@ class QccConfig:
     target_delta_min: float = 0.20
     target_delta_max: float = 0.30
     coverage_ratio: float = 1.0   # 高波动股部分覆盖(如 NVDA 0.5 = 只卖一半仓位的 call)
+    # 跨财报特例:不再一刀切禁止,但必须离得特别远 —
+    # delta 上限收紧到 earnings_max_delta 且 strike 至少高出现价 earnings_min_otm_pct
+    earnings_max_delta: float = 0.08
+    earnings_min_otm_pct: float = 0.20
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "QccConfig":
@@ -107,6 +111,9 @@ class RollConfig:
     allow_debit_for_improvement: bool = False
     min_strike_improvement_pct: float = 0.03
     max_debit_per_share: float = 0.50
+    # 跨财报特例(同 QccConfig):delta ≤ earnings_max_delta 且 OTM ≥ earnings_min_otm_pct
+    earnings_max_delta: float = 0.08
+    earnings_min_otm_pct: float = 0.20
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "RollConfig":

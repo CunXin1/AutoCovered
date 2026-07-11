@@ -39,6 +39,7 @@ class RollCandidate:
     net_credit: float               # premium - buyback_cost
     net_credit_annualized_pct: float
     strike_improvement_pct: float   # 相对旧 strike 的改善;开仓模式为 0
+    crosses_earnings: bool = False  # 到期跨财报(已按收紧规则过滤,仍需显式标注)
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +52,7 @@ class RollCandidate:
             "net_credit": round(self.net_credit, 2),
             "net_credit_annualized_pct": round(self.net_credit_annualized_pct, 4),
             "strike_improvement_pct": round(self.strike_improvement_pct, 4),
+            "crosses_earnings": self.crosses_earnings,
         }
 
     def summary(self) -> str:
@@ -59,6 +61,7 @@ class RollCandidate:
             f"{self.expiry.strftime('%m/%d')} ${self.strike:g}C ({self.dte}d {d})"
             f" net {'credit' if self.net_credit >= 0 else 'debit'} ${abs(self.net_credit):.2f}"
             f" 年化 {self.net_credit_annualized_pct:.1%}"
+            + (" ⚠️跨财报" if self.crosses_earnings else "")
         )
 
 
@@ -81,8 +84,10 @@ def find_roll_candidates(
 ) -> list[RollCandidate]:
     """从期权链筛出合规 roll 候选,按 net credit 年化降序。
 
-    硬过滤:DTE 在目标窗口、strike 必须 OTM(QCC)、到期不横跨财报、
-    delta 不超上限、默认只要 net credit(除非配置允许小 debit 换显著 strike 改善)。
+    硬过滤:DTE 在目标窗口、strike 必须 OTM(QCC)、delta 不超上限、
+    默认只要 net credit(除非配置允许小 debit 换显著 strike 改善)。
+    跨财报不再一刀切禁止,改为风险定价:必须 delta ≤ earnings_max_delta
+    且 strike ≥ 现价×(1+earnings_min_otm_pct),缺 delta 时不放行。
     """
     out: list[RollCandidate] = []
     for q in chain:
@@ -91,9 +96,14 @@ def find_roll_candidates(
             continue
         if q.strike <= stock_price:
             continue
-        if earnings_date is not None and today <= earnings_date <= q.expiry:
-            continue
-        if q.delta is not None and q.delta > cfg.max_delta:
+        crosses = earnings_date is not None and today <= earnings_date <= q.expiry
+        if crosses:
+            # 跨财报特例:离得特别远才放行(delta 极低 + 强制 OTM 距离)
+            if q.delta is None or q.delta > cfg.earnings_max_delta:
+                continue
+            if q.strike < stock_price * (1 + cfg.earnings_min_otm_pct):
+                continue
+        elif q.delta is not None and q.delta > cfg.max_delta:
             continue
 
         net_credit = q.mid - current_mid
@@ -119,6 +129,7 @@ def find_roll_candidates(
             net_credit=net_credit,
             net_credit_annualized_pct=_annualized(net_credit, stock_price, dte),
             strike_improvement_pct=improvement,
+            crosses_earnings=crosses,
         ))
 
     out.sort(key=lambda c: c.net_credit_annualized_pct, reverse=True)
@@ -134,7 +145,11 @@ def find_open_candidates(
     earnings_date: Optional[date] = None,
     top_n: int = 5,
 ) -> list[RollCandidate]:
-    """UNCOVERED 持仓的开仓候选:只列 QCC 合规(OTM、DTE>min)且 delta 在目标区间的。"""
+    """UNCOVERED 持仓的开仓候选:QCC 合规(OTM、DTE>min)且 delta 在目标区间。
+
+    跨财报候选不再直接排除,改走收紧规则:delta ≤ earnings_max_delta 且
+    strike ≥ 现价×(1+earnings_min_otm_pct)——即使跨财报也几乎不会被叫走。
+    """
     out: list[RollCandidate] = []
     for q in chain:
         dte = (q.expiry - today).days
@@ -142,9 +157,15 @@ def find_open_candidates(
             continue
         if q.strike <= stock_price:
             continue
-        if earnings_date is not None and today <= earnings_date <= q.expiry:
-            continue
-        if q.delta is None or not (qcc.target_delta_min <= q.delta <= qcc.target_delta_max):
+        if q.delta is None:
+            continue   # 开仓必须有 delta(跨不跨财报都一样)
+        crosses = earnings_date is not None and today <= earnings_date <= q.expiry
+        if crosses:
+            if q.delta > qcc.earnings_max_delta:
+                continue
+            if q.strike < stock_price * (1 + qcc.earnings_min_otm_pct):
+                continue
+        elif not (qcc.target_delta_min <= q.delta <= qcc.target_delta_max):
             continue
 
         out.append(RollCandidate(
@@ -157,6 +178,7 @@ def find_open_candidates(
             net_credit=q.mid,
             net_credit_annualized_pct=_annualized(q.mid, stock_price, dte),
             strike_improvement_pct=0.0,
+            crosses_earnings=crosses,
         ))
 
     out.sort(key=lambda c: c.net_credit_annualized_pct, reverse=True)

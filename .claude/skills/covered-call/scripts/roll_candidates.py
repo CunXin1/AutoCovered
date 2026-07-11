@@ -110,8 +110,8 @@ def main() -> int:
 
     quote_map = {(q.strike, q.expiry): q for q in chain}
     print("| 到期日 | Strike | 距现价 | DTE | Delta | bid/ask | 点差% | 权利金(mid) "
-          "| Net Credit | 年化 | Strike改善 |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|")
+          "| Net Credit | 年化 | Strike改善 | 跨财报 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for c in cands:
         d = f"{c.delta:.2f}" if c.delta is not None else "--"
         q = quote_map.get((c.strike, c.expiry))
@@ -119,11 +119,15 @@ def main() -> int:
         spread = (f"{(q.ask - q.bid) / q.mid:.0%}"
                   if q and q.mid > 0 and q.ask > 0 else "--")
         otm = (c.strike - price) / price if price > 0 else 0
+        ew = "⚠️" if c.crosses_earnings else "—"
         print(f"| {c.expiry} | ${c.strike:g} | {otm:+.1%} | {c.dte} | {d} | {ba} | {spread} "
               f"| {c.premium:.2f} | {c.net_credit:+.2f} "
-              f"| {c.net_credit_annualized_pct:.1%} | {c.strike_improvement_pct:+.1%} |")
+              f"| {c.net_credit_annualized_pct:.1%} | {c.strike_improvement_pct:+.1%} | {ew} |")
     if earnings:
-        print(f"\n注:已排除横跨财报日 {earnings} 的到期日。")
+        ecfg = roll_cfg if args.mode == "roll" else qcc_cfg
+        print(f"\n注:财报日 {earnings}。跨财报候选(⚠️)按收紧规则放行:"
+              f"delta ≤ {ecfg.earnings_max_delta:g} 且距现价 ≥ "
+              f"{ecfg.earnings_min_otm_pct:.0%}。")
     print("注:net credit = 新腿 mid − 旧腿买回 mid;年化 = net_credit/现价 × 365/DTE;"
           "点差% =(ask−bid)/mid,>10% 视为流动性差。")
     return 0
