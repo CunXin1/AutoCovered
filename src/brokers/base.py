@@ -40,6 +40,35 @@ class BrokerClient(ABC):
         """返回 (现价, 期权链报价列表)。只有实时 provider 支持。"""
         raise NotImplementedError(f"{self.name} 不支持期权链查询")
 
+    def fetch_executions(self) -> list:
+        """当日期权成交回报(账本对账主源)。不支持的 provider 返回空列表,
+        watcher 会自动降级为纯持仓 diff 推断。"""
+        return []
+
+    def fetch_daily_close(self, ticker: str, d: date) -> Optional[float]:
+        """d 当日官方收盘价(到期判定用)。不支持返回 None → 到期记 unknown。"""
+        return None
+
+    def quote_option(self, ticker: str, strike: float, expiry: date) -> dict:
+        """单合约实时报价(批准执行前二次校验)。只有实时 provider 支持。"""
+        raise NotImplementedError(f"{self.name} 不支持期权报价")
+
+    def fetch_open_order_refs(self) -> set[str]:
+        """在途订单 orderRef 集合(提案终态跟踪)。不支持返回空集合。"""
+        return set()
+
+    def place_open_call(
+        self,
+        ticker: str,
+        strike: float,
+        expiry: date,
+        contracts: int,
+        limit_price: float,
+        order_ref: str = "",
+    ) -> str:
+        """卖出开仓 covered call 限价单。只有交易 provider 支持。"""
+        raise NotImplementedError(f"{self.name} 不支持下单")
+
     def place_roll(
         self,
         ticker: str,
@@ -49,6 +78,7 @@ class BrokerClient(ABC):
         new_expiry: date,
         contracts: int,
         limit_credit: float,
+        order_ref: str = "",
     ) -> str:
         """提交 roll 组合限价单,返回订单状态描述。只有交易 provider 支持。"""
         raise NotImplementedError(f"{self.name} 不支持下单")

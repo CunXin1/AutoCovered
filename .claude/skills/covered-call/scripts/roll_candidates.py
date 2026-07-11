@@ -29,13 +29,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("ticker")
     ap.add_argument("--mode", choices=["roll", "open"], default="roll")
+    ap.add_argument("--style", default=None,
+                    help="开仓风格预设(settings.yaml styles 段,如 conservative/aggressive;"
+                         "per-ticker 覆盖仍是硬上限)")
     ap.add_argument("--top", type=int, default=5)
     args = ap.parse_args()
     ticker = args.ticker.upper()
 
     cfg = load_config()
     roll_cfg = RollConfig.from_dict(cfg.get("roll"))
-    qcc_cfg = ticker_qcc(cfg, ticker)
+    try:
+        qcc_cfg = ticker_qcc(cfg, ticker, style=args.style)
+    except ValueError as e:
+        print(f"错误: {e}")
+        return 1
 
     # 读当前持仓(空头腿 + 财报日)
     entry = None
@@ -92,24 +99,33 @@ def main() -> int:
             earnings_date=earnings,
             top_n=args.top,
         )
+        style_txt = f",风格 {args.style}" if args.style else ""
         print(f"# {ticker} 开仓候选(现价 {price:.2f},目标 delta "
               f"{qcc_cfg.target_delta_min:g}–{qcc_cfg.target_delta_max:g},"
-              f"覆盖比例 {qcc_cfg.coverage_ratio:g})\n")
+              f"覆盖比例 {qcc_cfg.coverage_ratio:g}{style_txt})\n")
 
     if not cands:
         print("没有满足过滤条件的候选(net credit / DTE 窗口 / OTM / 不跨财报 / delta 上限)。")
         return 0
 
-    print("| 到期日 | Strike | DTE | Delta | 权利金(mid) | Net Credit | 年化 | Strike改善 |")
-    print("|---|---|---|---|---|---|---|---|")
+    quote_map = {(q.strike, q.expiry): q for q in chain}
+    print("| 到期日 | Strike | 距现价 | DTE | Delta | bid/ask | 点差% | 权利金(mid) "
+          "| Net Credit | 年化 | Strike改善 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     for c in cands:
         d = f"{c.delta:.2f}" if c.delta is not None else "--"
-        print(f"| {c.expiry} | ${c.strike:g} | {c.dte} | {d} | {c.premium:.2f} "
-              f"| {c.net_credit:+.2f} | {c.net_credit_annualized_pct:.1%} "
-              f"| {c.strike_improvement_pct:+.1%} |")
+        q = quote_map.get((c.strike, c.expiry))
+        ba = f"{q.bid:.2f}/{q.ask:.2f}" if q else "--"
+        spread = (f"{(q.ask - q.bid) / q.mid:.0%}"
+                  if q and q.mid > 0 and q.ask > 0 else "--")
+        otm = (c.strike - price) / price if price > 0 else 0
+        print(f"| {c.expiry} | ${c.strike:g} | {otm:+.1%} | {c.dte} | {d} | {ba} | {spread} "
+              f"| {c.premium:.2f} | {c.net_credit:+.2f} "
+              f"| {c.net_credit_annualized_pct:.1%} | {c.strike_improvement_pct:+.1%} |")
     if earnings:
         print(f"\n注:已排除横跨财报日 {earnings} 的到期日。")
-    print("注:net credit = 新腿 mid − 旧腿买回 mid;年化 = net_credit/现价 × 365/DTE。")
+    print("注:net credit = 新腿 mid − 旧腿买回 mid;年化 = net_credit/现价 × 365/DTE;"
+          "点差% =(ask−bid)/mid,>10% 视为流动性差。")
     return 0
 
 

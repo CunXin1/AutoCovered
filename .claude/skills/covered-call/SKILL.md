@@ -25,12 +25,15 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 ## 数据来源(严格按此优先级,禁止自行估算任何数字)
 
 1. `state/positions.json` — 持仓、Greeks、规则引擎判定的状态(state/flags/reasons)与
-   全部派生指标(metrics)。**这是唯一事实来源**
+   全部派生指标(metrics)。**这是当前状态的唯一事实来源**
 2. `state/alerts.jsonl` — 当日告警流水;`state/proposals.json` — 待批/已处理的交易提案
-3. `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER [--mode open]`
+3. `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER
+   [--mode open] [--style conservative|aggressive]`
    — roll/开仓候选(net credit、年化由脚本确定性计算;需要 IB Gateway 在线)
-4. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期),不用于获取价格
-5. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
+4. `python -m src.stats [--ticker X] [--json]` — 历史收益统计(round 级 + roll 链级、
+   数据质量分层)。**这是账本 state/ledger.db 的唯一读取方式,禁止直接 SQL**
+5. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期),不用于获取价格
+6. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
 
 如果 positions.json 的 updated_at 距现在超过 15 分钟(盘中),先声明数据可能过期。
 
@@ -42,6 +45,32 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
   --title "<一句话>" --body-file <文件> --severity <0-4>`
   (severity:🔴4 🟠3 🟡/默认2;正文长时先 Write 到 state/analysis/ 再用 --body-file)
 - 分析存档:Write 到 `state/analysis/`(命名 `YYYY-MM-DD-<主题>.md`)
+
+## 开仓流程(用户说"想卖 covered call / 开仓"时)
+
+1. **问风格**(用户未指明时):保守(conservative,低 delta 远 OTM,权利金少被叫走概率低)
+   还是激进(aggressive,高 delta 近 OTM,权利金多被叫走概率高)。
+   注意 NVDA/TSLA 等 per-ticker 覆盖是硬上限,风格突破不了它 — 如实告知。
+2. **拿确定性候选**:`roll_candidates.py TICKER --mode open --style <风格>`
+   (可两种风格各跑一次做对比表)。
+3. **9 维研究定价**:读 `references/strike-research.md` 并严格按其执行 —
+   IV 水位、财报/事件、除息、技术阻力、趋势状态、分析师目标价、成本价与税务、
+   流动性(候选表 bid/ask 点差列)、年化底线。逐维给投票,输出决策表;
+   **"这轮不卖"是合法结论**。delta 只是起点,不是答案。
+4. **用户选定后创建提案**(这是唯一入口,直接下单和手改 proposals.json 都被禁止):
+   `python -m src.execution.propose TICKER --strike <K> --expiry <YYYY-MM-DD>
+   --contracts <N> --style <风格> [--limit <价>] --rationale "<一句话依据>"`
+   — CLI 会用实时报价重验候选集成员资格 + 覆盖率,不合规会拒绝并列出合法候选。
+5. 提案会推送到手机(✅/❌ 按钮,可 `APPROVE <id> @<价>` 改限价)。
+   你到此为止:**执行只能由用户在手机上批准**,不要替用户做决定。
+
+## 记账与统计
+
+- 所有成交(系统单 + 手动 TWS 单)由 watcher 自动入账 `state/ledger.db`;
+  到期/指派由持仓 diff 推断。推断价格的记录会推手机请用户
+  `CONFIRM <trade_id> @<价>` 修正。
+- 谈"某股票卖 CC 到底赚了多少"必须用 `python -m src.stats` 的输出,
+  注意引用它的数据质量分层(推断价部分要如实标注)与 roll 链口径。
 
 ## 输出格式
 

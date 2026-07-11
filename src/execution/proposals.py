@@ -23,9 +23,13 @@ PENDING = "pending"
 APPROVED = "approved"
 REJECTED = "rejected"
 EXPIRED = "expired"
-EXECUTED = "executed"
+EXECUTED = "executed"            # 兼容旧记录;新流程用 SUBMITTED→FILLED/CANCELLED
 DRY_RUN_EXECUTED = "dry_run_executed"
 FAILED = "failed"
+SUBMITTED = "submitted"          # 订单已提交券商,等待成交(watcher 周期对账)
+PARTIALLY_FILLED = "partially_filled"
+FILLED = "filled"
+CANCELLED = "cancelled"          # DAY 限价单收盘未成交/被撤
 
 
 @dataclass
@@ -165,6 +169,16 @@ class ProposalStore:
         d = self._load_all().get(pid)
         return Proposal.from_dict(d) if d else None
 
+    def load_all(self) -> list[Proposal]:
+        """全部提案(账本归因/手动 roll 配对/覆盖率校验用)。"""
+        out = []
+        for d in self._load_all().values():
+            try:
+                out.append(Proposal.from_dict(d))
+            except (KeyError, ValueError, TypeError):
+                log.warning("提案记录损坏,跳过: %s", d.get("id"))
+        return out
+
     def has_pending_for(self, position_id: str) -> bool:
         now = datetime.now(timezone.utc)
         for d in self._load_all().values():
@@ -172,6 +186,23 @@ class ProposalStore:
                 if datetime.fromisoformat(d["expires_at"]) > now:
                     return True
         return False
+
+    def by_status(self, status: str) -> list[Proposal]:
+        return [Proposal.from_dict(d) for d in self._load_all().values()
+                if d.get("status") == status]
+
+    def pending_open_contracts(self, ticker: str) -> int:
+        """该 ticker 未过期 pending OPEN_CALL 提案的总张数(覆盖率校验:
+        两条各自合规的提案不许联合超卖)。"""
+        now = datetime.now(timezone.utc)
+        n = 0
+        for d in self._load_all().values():
+            if (d.get("ticker", "").upper() == ticker.upper()
+                    and d.get("kind") == "OPEN_CALL"
+                    and d.get("status") == PENDING
+                    and datetime.fromisoformat(d["expires_at"]) > now):
+                n += sum(l.get("contracts", 0) for l in d.get("legs", []))
+        return n
 
     def expire_stale(self) -> int:
         """把过期的 pending 标记为 expired,返回处理条数。"""

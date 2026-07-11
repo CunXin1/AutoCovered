@@ -74,10 +74,26 @@ python -m src.watcher --once                             # 单轮冒烟(需 IB G
 
 系统**永远不会**未经手机批准自行下单。全自动模式不存在,也不会加。
 
+## 三大模块
+
+1. **开仓(半自动)**:在 Claude Code 里说"给 NVDA 开仓"→ Claude 跑确定性候选
+   脚本(`--style conservative|aggressive`,per-ticker 覆盖是硬上限)+ WebSearch
+   研究 → 你选定后 `propose` CLI 用实时报价做候选集成员资格 + 覆盖率校验 →
+   推手机(✅/❌ 按钮,`APPROVE <id> @<价>` 可改限价)→ 批准后执行器
+   二次校验再下 SELL 限价单(DAY,orderRef 归因)。
+2. **监控**:watcher 每 5 分钟跑状态机,靠近/突破 strike(TESTED/BREACHED)
+   即推手机 + 触发 Claude 分析 roll 三选一。
+3. **记账与统计**:所有成交(系统单 + TWS 手动单)经 IBKR executions 对账入
+   SQLite 账本(`state/ledger.db`,exec_id 幂等);到期/指派由持仓 diff +
+   官方收盘价推断,推断价可 `CONFIRM <trade_id> @<价>` 修正。
+   `python -m src.stats` 输出 per-ticker 实现盈亏、round 级 + roll 链级胜率、
+   数据质量分层、被叫走的放弃上涨。
+
 ## 在 Claude Code 窗口里用
 
 本仓库自带 `covered-call` skill。在仓库目录开 Claude Code 直接说:
-"看一下持仓状态" / "跑一份晨报" / "NVDA 那条 call 现在该不该 roll"。
+"看一下持仓状态" / "跑一份晨报" / "NVDA 那条 call 现在该不该 roll" /
+"给 MSFT 开仓,保守一点" / "统计一下每只股票卖 CC 赚了多少"。
 
 **Claude Code 定时任务**:`routines/` 目录有三份面向 Claude 的任务指令 —
 晨报(交易日 6:15)、盘中击穿/roll 巡检(每 2 小时,有风险才推送)、周报(周日)。

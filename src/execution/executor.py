@@ -16,14 +16,15 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from src.config import ticker_qcc
 from src.engine.roll import RollCandidate
 from src.execution.proposals import (
     APPROVED,
     DRY_RUN_EXECUTED,
-    EXECUTED,
     FAILED,
     PENDING,
     REJECTED,
+    SUBMITTED,
     Proposal,
     ProposalLeg,
     ProposalStore,
@@ -33,9 +34,15 @@ from src.notify.push import Notifier
 
 log = logging.getLogger(__name__)
 
+# 改价护栏:新限价不得低于原提案限价的一半(防 fat-finger,如 24.5 打成 2.45 的反向)
+LIMIT_OVERRIDE_FLOOR = 0.5
+# 执行前校验:现报 mid 低于提案限价七成 = 行情已明显劣化,拒执行请重新提案
+MID_DETERIORATION_FLOOR = 0.7
+
 
 class Executor:
     def __init__(self, cfg: dict, store: ProposalStore, notifier: Notifier, broker=None):
+        self.cfg = cfg
         e = cfg.get("execution") or {}
         self.enabled = bool(e.get("enabled", False))
         self.dry_run = bool(e.get("dry_run", True))
@@ -86,7 +93,7 @@ class Executor:
 
     # ------------------------------------------------------------ 命令处理
 
-    def handle_approve(self, pid: str) -> None:
+    def handle_approve(self, pid: str, limit_override: float | None = None) -> None:
         p = self.store.get(pid)
         if p is None:
             self.notifier.push("⚠️ 提案不存在", f"未找到提案 {pid}", severity=2)
@@ -100,6 +107,22 @@ class Executor:
             self.notifier.push("⏰ 提案已过期", f"{pid} 已超过 {self.ttl_minutes} 分钟有效期,"
                                f"请等待下一轮重新报价", severity=2)
             return
+
+        if limit_override is not None:
+            unit = "每股权利金" if p.kind == "OPEN_CALL" else "net credit(每股)"
+            if limit_override <= 0 or limit_override < p.limit_net_credit * LIMIT_OVERRIDE_FLOOR:
+                self.notifier.push(
+                    "🛑 改价被拒(提案保持待批)",
+                    f"{pid} 原限价 {p.limit_net_credit:.2f}({unit}),"
+                    f"改价 {limit_override:.2f} 低于原价一半,疑似输入失误。\n"
+                    f"确要低价请先 REJECT 再重新提案。", severity=3)
+                return
+            old = p.limit_net_credit
+            p.limit_net_credit = round(limit_override, 2)
+            self.store.save(p)
+            self.notifier.push("✏️ 限价已改",
+                               f"{pid} {old:.2f} → {p.limit_net_credit:.2f}({unit})",
+                               severity=1)
 
         if not self.enabled:
             p.status = APPROVED
@@ -150,29 +173,105 @@ class Executor:
             self.store.save(p)
             self.notifier.push("🛑 执行失败", p.result, severity=3)
             return
+
+        # 提案生成与批准之间可能隔了 TTL 长度的行情:提交前按新鲜报价重校验
+        reason = self._precheck(p)
+        if reason:
+            p.status = FAILED
+            p.result = f"执行前校验未通过: {reason}"
+            self.store.save(p)
+            self.notifier.push("🛑 执行前校验未通过", f"{p.summary()}\n{reason}", severity=3)
+            return
+
         try:
-            buy = next(l for l in p.legs if l.action == "BUY")
             sell = next(l for l in p.legs if l.action == "SELL")
-            result = self.broker.place_roll(
-                ticker=p.ticker,
-                old_strike=buy.strike,
-                old_expiry=buy.expiry,
-                new_strike=sell.strike,
-                new_expiry=sell.expiry,
-                contracts=buy.contracts,
-                limit_credit=p.limit_net_credit,
-            )
-            p.status = EXECUTED
+            if p.kind == "OPEN_CALL":
+                result = self.broker.place_open_call(
+                    ticker=p.ticker,
+                    strike=sell.strike,
+                    expiry=sell.expiry,
+                    contracts=sell.contracts,
+                    limit_price=p.limit_net_credit,
+                    order_ref=p.id,
+                )
+            elif p.kind == "ROLL":
+                buy = next(l for l in p.legs if l.action == "BUY")
+                result = self.broker.place_roll(
+                    ticker=p.ticker,
+                    old_strike=buy.strike,
+                    old_expiry=buy.expiry,
+                    new_strike=sell.strike,
+                    new_expiry=sell.expiry,
+                    contracts=buy.contracts,
+                    limit_credit=p.limit_net_credit,
+                    order_ref=p.id,
+                )
+            else:
+                raise ValueError(f"未知提案类型: {p.kind}")
+            p.status = SUBMITTED   # 终态由 watcher 对账:FILLED/PARTIALLY_FILLED/CANCELLED
             p.result = result
             self.store.save(p)
             self._log_order(p, dry_run=False)
-            self.notifier.push("✅ 订单已提交", f"{p.summary()}\n{result}", severity=3)
+            self.notifier.push("📤 订单已提交(等待成交)",
+                               f"{p.summary()}\n{result}\n成交/取消会另行推送", severity=3)
         except Exception as e:
             log.exception("下单失败 %s", p.id)
             p.status = FAILED
             p.result = str(e)
             self.store.save(p)
             self.notifier.push("🛑 下单失败", f"{p.summary()}\n{e}", severity=4)
+
+    def _precheck(self, p: Proposal) -> Optional[str]:
+        """提交前的确定性二次校验。返回失败原因,None = 通过。"""
+        sell = next((l for l in p.legs if l.action == "SELL"), None)
+        if sell is None:
+            return "提案缺 SELL 腿"
+        try:
+            q = self.broker.quote_option(p.ticker, sell.strike, sell.expiry)
+        except Exception as e:
+            return f"执行前报价失败: {e}"
+        sp = q.get("stock_price")
+        if sp is not None and sp >= sell.strike:
+            return (f"新腿已不再 OTM(现价 {sp:.2f} ≥ strike {sell.strike:g}),"
+                    f"QCC 纪律禁止,请重新提案")
+        if p.kind == "OPEN_CALL":
+            mid = q.get("mid")
+            if mid is not None and mid < p.limit_net_credit * MID_DETERIORATION_FLOOR:
+                return (f"行情已劣化:现报 mid {mid:.2f} 不足限价 "
+                        f"{p.limit_net_credit:.2f} 的 {MID_DETERIORATION_FLOOR:.0%},请重新提案")
+            err = self._coverage_error(p.ticker, sell.contracts, exclude_id=p.id)
+            if err:
+                return err
+        return None
+
+    def _coverage_error(self, ticker: str, want: int,
+                        exclude_id: str = "") -> Optional[str]:
+        """覆盖率重查:允许张数 = floor(股数×coverage_ratio/100)
+        − 该 ticker 全部现有空头(跨腿聚合)− 其他未过期待批 OPEN_CALL 张数。"""
+        pos_path = self.store.path.parent / "positions.json"
+        try:
+            with open(pos_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return "读不到 positions.json,无法核对覆盖率"
+        qty, shorts = 0.0, 0
+        for d in raw.get("positions", []):
+            if d.get("ticker", "").upper() != ticker.upper():
+                continue
+            qty = max(qty, float((d.get("stock") or {}).get("qty", 0)))
+            if d.get("call"):
+                shorts += int(d["call"].get("contracts", 0))
+        ratio = ticker_qcc(self.cfg, ticker).coverage_ratio
+        pending = self.store.pending_open_contracts(ticker)
+        if exclude_id:
+            own = self.store.get(exclude_id)
+            if own is not None and own.status == PENDING and not own.is_expired():
+                pending -= sum(l.contracts for l in own.legs)
+        allowed = math.floor(qty * ratio / 100) - shorts - max(pending, 0)
+        if want > allowed:
+            return (f"覆盖率不足:允许 {allowed} 张 = floor({qty:g}×{ratio:g}/100) "
+                    f"− 现有空头 {shorts} − 其他待批 {max(pending, 0)},请求 {want} 张")
+        return None
 
     # ------------------------------------------------------------ 记账
 
@@ -190,7 +289,9 @@ class Executor:
     def _orders_today(self) -> int:
         if not self.orders_log.exists():
             return 0
-        today = date.today().isoformat()
+        # 与 _log_order 的 UTC 时间戳同口径;用本地日期会在跨本地午夜的
+        # 美股盘中把"每日"限额中途清零(如 UTC+8 时区)
+        today = datetime.now(timezone.utc).date().isoformat()
         n = 0
         with open(self.orders_log, "r", encoding="utf-8") as f:
             for line in f:

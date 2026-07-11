@@ -10,7 +10,8 @@ brokers:
 ibkr:
   host: 127.0.0.1
   port: 7497                   # 7497=TWS paper / 7496=TWS live / 4002=GW paper / 4001=GW live
-  client_id: 11                # watcher 专用;roll 脚本自动用 client_id+1
+  client_id: 11                # watcher 常驻;候选脚本自动用 +1(12),propose 用 +2(13)
+  client_id_once: 14           # watcher --once(Claude 刷数据)专用,不与常驻冲突
   account: ""
   market_data_type: 1          # 1=实时(需订阅) 2=frozen 3=延迟15分钟
 
@@ -61,6 +62,11 @@ qcc:                           # 开仓硬规则(简化版内部纪律,非完整
   target_delta_min: 0.20
   target_delta_max: 0.30
   coverage_ratio: 1.0
+
+styles:                        # 开仓风格预设(propose / roll_candidates --style)
+  conservative: { target_delta_min: 0.15, target_delta_max: 0.25 }
+  aggressive:   { target_delta_min: 0.30, target_delta_max: 0.40 }
+  # 合并顺序 qcc ← style ← ticker:per-ticker 覆盖是硬上限,风格不能突破
 
 tickers:                       # per-ticker 覆盖(高波动股降 delta + 部分覆盖)
   NVDA: { coverage_ratio: 0.5, target_delta_min: 0.15, target_delta_max: 0.20 }

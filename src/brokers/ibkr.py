@@ -58,20 +58,66 @@ class IBKRGatewayClient(BrokerClient):
         self.ib = None
 
     # ------------------------------------------------------------ 连接
+    #
+    # Gateway 每日自动重启后,ib_async 的 isConnected() 可能停留在旧状态,
+    # 或连接进入"socket 在但 API 不响应"的僵尸态。因此:
+    # 1. 复用前先做轻量健康探测(reqCurrentTime round-trip)
+    # 2. 探测失败 → 拆干净旧对象重建,绝不复用坏 IB 实例
+    # 3. 撞 client id(旧会话未释放,IB 错误 326)→ +100 轮换重试,
+    #    不会落在 11-14 的保留段上
+
+    CONNECT_ATTEMPTS = 3
 
     def connect(self) -> None:
         from ib_async import IB
 
-        if self.ib is not None and self.ib.isConnected():
-            return
-        self.ib = IB()
-        self.ib.connect(self.host, self.port, clientId=self.client_id, timeout=15)
-        self.ib.reqMarketDataType(self.market_data_type)
-        log.info("IBKR 已连接 %s:%s clientId=%s", self.host, self.port, self.client_id)
+        if self.ib is not None:
+            if self._alive():
+                return
+            log.warning("IBKR 连接僵尸/已断,拆除重建")
+            self._teardown()
+
+        last_err: Exception = RuntimeError("IBKR 连接失败")
+        for attempt in range(self.CONNECT_ATTEMPTS):
+            cid = self.client_id + attempt * 100
+            ib = IB()
+            ib.RequestTimeout = 20   # 有界等待,防僵尸连接把请求挂死
+            try:
+                ib.connect(self.host, self.port, clientId=cid, timeout=15)
+                ib.reqMarketDataType(self.market_data_type)
+                self.ib = ib
+                log.info("IBKR 已连接 %s:%s clientId=%s", self.host, self.port, cid)
+                return
+            except Exception as e:
+                last_err = e
+                try:
+                    ib.disconnect()
+                except Exception:
+                    pass
+                log.warning("IBKR 连接失败(clientId=%s,第 %d/%d 次): %s",
+                            cid, attempt + 1, self.CONNECT_ATTEMPTS, e)
+        raise last_err
+
+    def _alive(self) -> bool:
+        """isConnected() 不可信,发一个轻量请求确认 API 真在响应。"""
+        if self.ib is None or not self.ib.isConnected():
+            return False
+        try:
+            self.ib.reqCurrentTime()
+            return True
+        except Exception:
+            return False
+
+    def _teardown(self) -> None:
+        if self.ib is not None:
+            try:
+                self.ib.disconnect()
+            except Exception:
+                pass
+        self.ib = None
 
     def disconnect(self) -> None:
-        if self.ib is not None and self.ib.isConnected():
-            self.ib.disconnect()
+        self._teardown()
 
     def _ensure(self):
         self.connect()
@@ -224,7 +270,11 @@ class IBKRGatewayClient(BrokerClient):
         quotes: list[ChainQuote] = []
         CHUNK = 50
         for i in range(0, len(contracts), CHUNK):
-            batch = ib.qualifyContracts(*contracts[i : i + CHUNK])
+            # qualifyContracts 对不存在的 strike/expiry 组合返回 None(会打 "Unknown
+            # contract" 日志);必须滤掉,否则 None 传进 reqTickers → reqMktData 崩溃。
+            batch = [c for c in ib.qualifyContracts(*contracts[i : i + CHUNK]) if c]
+            if not batch:
+                continue
             for t in ib.reqTickers(*batch):
                 bid, ask = _safe(t.bid) or 0.0, _safe(t.ask) or 0.0
                 if bid <= 0 and ask <= 0:
@@ -241,7 +291,128 @@ class IBKRGatewayClient(BrokerClient):
                 ))
         return price, quotes
 
+    # ------------------------------------------------------------ 成交与历史
+
+    def fetch_executions(self):
+        """当日全账户期权成交(所有 client + TWS 手动单),含精确佣金。
+
+        orderRef = 本系统提案 id(下单时写入),空 = 手动单。
+        covered call 账户按 side 映射方向:SLD=开仓卖出,BOT=买回平仓。
+        """
+        from ib_async import ExecutionFilter
+
+        from src.engine.lifecycle import ExecutionRecord
+
+        ib = self._ensure()
+        out: list[ExecutionRecord] = []
+        for f in ib.reqExecutions(ExecutionFilter()):
+            c = f.contract
+            if c.secType != "OPT" or c.right not in ("C", "CALL"):
+                continue   # BAG 汇总行/正股/put 不入期权账本
+            ex = f.execution
+            if self.accounts and str(ex.acctNumber).upper() not in self.accounts:
+                continue
+            commission = 0.0
+            if f.commissionReport is not None:
+                commission = _safe(f.commissionReport.commission) or 0.0
+            ts = ex.time.isoformat() if hasattr(ex.time, "isoformat") else str(ex.time)
+            out.append(ExecutionRecord(
+                exec_id=ex.execId,
+                ts=ts,
+                ticker=c.symbol,
+                action="SELL_TO_OPEN" if ex.side == "SLD" else "BUY_TO_CLOSE",
+                strike=float(c.strike),
+                expiry=datetime.strptime(
+                    c.lastTradeDateOrContractMonth[:8], "%Y%m%d").date(),
+                contracts=int(ex.shares),
+                price=float(ex.price),
+                fees=commission,
+                order_ref=ex.orderRef or "",
+            ))
+        return out
+
+    def fetch_daily_close(self, ticker: str, d: date) -> Optional[float]:
+        """d 当日官方日线收盘价(到期 expired/assigned 判定用;当日无 bar 返回 None)。"""
+        from ib_async import Stock
+
+        ib = self._ensure()
+        stock = Stock(ticker, "SMART", "USD")
+        ib.qualifyContracts(stock)
+        bars = ib.reqHistoricalData(
+            stock,
+            endDateTime=f"{d.strftime('%Y%m%d')} 23:59:59 US/Eastern",
+            durationStr="5 D",
+            barSizeSetting="1 day",
+            whatToShow="TRADES",
+            useRTH=True,
+        )
+        for bar in reversed(bars or []):
+            bar_date = bar.date if isinstance(bar.date, date) else bar.date.date()
+            if bar_date == d:
+                return _safe(bar.close)
+        return None
+
+    def quote_option(self, ticker: str, strike: float, expiry: date) -> dict:
+        """单合约实时报价(批准执行前的二次校验用)。
+
+        返回 {bid, ask, mid, delta, stock_price},拿不到的字段为 None。
+        """
+        from ib_async import Option, Stock
+
+        ib = self._ensure()
+        stock = Stock(ticker, "SMART", "USD")
+        opt = Option(ticker, expiry.strftime("%Y%m%d"), strike, "C", "SMART")
+        ib.qualifyContracts(stock, opt)
+        st, ot = ib.reqTickers(stock, opt)
+        bid, ask = _safe(ot.bid), _safe(ot.ask)
+        mid = (bid + ask) / 2 if (bid and ask and bid > 0 and ask > 0) else None
+        mg = ot.modelGreeks
+        return {
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
+            "delta": _safe(mg.delta) if mg else None,
+            "stock_price": _safe(st.marketPrice()) or _safe(st.close),
+        }
+
     # ------------------------------------------------------------ 下单
+
+    def place_open_call(
+        self,
+        ticker: str,
+        strike: float,
+        expiry: date,
+        contracts: int,
+        limit_price: float,
+        order_ref: str = "",
+    ) -> str:
+        """卖出开仓单腿 covered call:SELL 限价单,DAY 有效(禁 GTC,
+        订单不许活得比提案治理长)。orderRef=提案 id,成交回报自动归因。
+
+        ⚠️ 与 place_roll 同理:live 使用前必须 paper 账户实测。
+        """
+        from ib_async import LimitOrder, Option
+
+        ib = self._ensure()
+        opt = Option(ticker, expiry.strftime("%Y%m%d"), strike, "C", "SMART")
+        ib.qualifyContracts(opt)
+        order = LimitOrder("SELL", contracts, round(limit_price, 2),
+                           tif="DAY", orderRef=order_ref)
+        trade = ib.placeOrder(opt, order)
+        ib.sleep(3)
+        status = trade.orderStatus.status
+        log.info("开仓订单已提交 %s: %s", ticker, status)
+        return (
+            f"订单已提交(状态 {status}):SELL {contracts}x "
+            f"{expiry:%m/%d} ${strike:g}C 限价 ${limit_price:.2f}(DAY)"
+        )
+
+    def fetch_open_order_refs(self) -> set[str]:
+        """当前在途订单的 orderRef 集合(提案终态跟踪:不在途且未全成交 = 已取消)。"""
+        ib = self._ensure()
+        ib.reqAllOpenOrders()
+        ib.sleep(1)
+        return {t.order.orderRef for t in ib.openTrades() if t.order.orderRef}
 
     def place_roll(
         self,
@@ -252,6 +423,7 @@ class IBKRGatewayClient(BrokerClient):
         new_expiry: date,
         contracts: int,
         limit_credit: float,
+        order_ref: str = "",
     ) -> str:
         """Roll = BAG combo:BUY 旧 call(平仓)+ SELL 新 call(开仓),net credit 限价。
 
@@ -275,7 +447,8 @@ class IBKRGatewayClient(BrokerClient):
                 ComboLeg(conId=new.conId, ratio=1, action="SELL", exchange="SMART"),
             ],
         )
-        order = LimitOrder("BUY", contracts, -abs(limit_credit))
+        order = LimitOrder("BUY", contracts, -abs(limit_credit),
+                           tif="DAY", orderRef=order_ref)
         trade = ib.placeOrder(combo, order)
         ib.sleep(3)
         status = trade.orderStatus.status

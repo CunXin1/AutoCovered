@@ -47,14 +47,21 @@ def load_lots(path: Path | None = None) -> dict[str, date]:
     return out
 
 
-def ticker_qcc(cfg: dict, ticker: str):
-    """合并全局 qcc 配置与 tickers.<TICKER> 的 per-ticker 覆盖。
+def ticker_qcc(cfg: dict, ticker: str, style: str | None = None):
+    """三层合并开仓配置:qcc ← styles.<style> ← tickers.<TICKER>。
 
-    高波动股(NVDA/TSLA)按 strategy 文档降 delta、部分覆盖。
+    合并顺序即风险语义:style(激进/保守)只是默认档的选择,
+    per-ticker 覆盖(NVDA/TSLA 低 delta + 部分覆盖)是硬上限,
+    永远在最后生效 — aggressive 不能击穿高波动股的风险约束。
     """
     from src.models import QccConfig
 
     base = dict(cfg.get("qcc") or {})
+    if style:
+        styles = cfg.get("styles") or {}
+        if style not in styles:
+            raise ValueError(f"未知风格 {style!r},可用: {sorted(styles)}")
+        base.update(styles[style] or {})
     override = (cfg.get("tickers") or {}).get(ticker.upper()) or {}
     base.update(override)
     return QccConfig.from_dict(base)
