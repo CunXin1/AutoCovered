@@ -48,6 +48,12 @@ class IBKRGatewayClient(BrokerClient):
         self.port = int(cfg.get("port", 7497))
         self.client_id = int(cfg.get("client_id", 11))
         self.account = cfg.get("account", "") or ""
+        # 跟踪的账户集合(大写)。留空 = 跟踪所有 managed accounts。
+        # 支持 accounts: [U123, U456] 或单个 account: U123。
+        accts = list(cfg.get("accounts") or [])
+        if self.account:
+            accts.append(self.account)
+        self.accounts = {str(a).strip().upper() for a in accts if str(a).strip()}
         self.market_data_type = int(cfg.get("market_data_type", 1))
         self.ib = None
 
@@ -77,20 +83,50 @@ class IBKRGatewayClient(BrokerClient):
         ib = self._ensure()
         lots = lots or {}
 
-        stocks: dict[str, object] = {}
-        calls: dict[str, list] = defaultdict(list)
-        for item in ib.portfolio():
-            c = item.contract
-            if c.secType == "STK" and item.position > 0:
-                stocks[c.symbol] = item
-            elif c.secType == "OPT" and c.right in ("C", "CALL") and item.position < 0:
-                calls[c.symbol].append(item)
+        # ib.positions() 跨所有 managed accounts 返回;portfolio() 在多账户下为空,
+        # 故这里用 positions() 并按 (账户, 标的) 分组。现价 positions() 不带,后面 reqTickers 取。
+        stocks: dict[tuple[str, str], object] = {}
+        calls: dict[tuple[str, str], list] = defaultdict(list)
+        for p in ib.positions():
+            if self.accounts and str(p.account).upper() not in self.accounts:
+                continue
+            c = p.contract
+            key = (p.account, c.symbol)
+            if c.secType == "STK" and p.position > 0:
+                stocks[key] = p
+            elif c.secType == "OPT" and c.right in ("C", "CALL") and p.position < 0:
+                calls[key].append(p)
+
+        # 同一标的出现在多个跟踪账户时,position_id 会撞 key(models.Position 不含账户维度),
+        # 这里显式告警,提醒用配置把跟踪范围收敛到单账户。
+        seen_syms: dict[str, str] = {}
+        for acct, sym in list(stocks.keys()) + list(calls.keys()):
+            if sym in seen_syms and seen_syms[sym] != acct:
+                log.warning(
+                    "标的 %s 同时存在于账户 %s 和 %s;当前 state key 不区分账户,"
+                    "建议用 ibkr.accounts 只跟踪其一", sym, seen_syms[sym], acct
+                )
+            seen_syms.setdefault(sym, acct)
+
+        # 批量拿股票现价(positions() 不带 marketPrice)
+        stock_contracts = []
+        for sit in stocks.values():
+            # positions() 合约的 exchange 是上市所(NASDAQ/NYSE),对其直接请求行情返回
+            # NaN;必须用 SMART 聚合器。conId 已锁定标的身份,改 exchange 不影响识别。
+            sit.contract.exchange = "SMART"
+            stock_contracts.append(sit.contract)
+        stock_px: dict[int, float] = {}
+        if stock_contracts:
+            for t in ib.reqTickers(*ib.qualifyContracts(*stock_contracts)):
+                px = _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
+                if px:
+                    stock_px[t.contract.conId] = px
 
         # 批量拿期权实时数据(delta/iv/mid)
         option_contracts = []
         for items in calls.values():
             for it in items:
-                it.contract.exchange = it.contract.exchange or "SMART"
+                it.contract.exchange = "SMART"  # 同理:用 SMART 聚合器取 greeks/mid
                 option_contracts.append(it.contract)
         greeks: dict[int, dict] = {}
         if option_contracts:
@@ -108,15 +144,20 @@ class IBKRGatewayClient(BrokerClient):
                 }
 
         positions: list[Position] = []
-        for sym, sit in stocks.items():
-            sym_calls = calls.get(sym, [])
+        for (acct, sym), sit in stocks.items():
+            sym_calls = calls.get((acct, sym), [])
             if sit.position < 100 and not sym_calls:
                 continue  # 不足一张 call 的散股且无空头腿,不跟踪
 
+            price = stock_px.get(sit.contract.conId)
+            if price is None:
+                log.warning("%s(%s)无法获取现价,跳过", sym, acct)
+                continue
+
             stock = StockHolding(
                 qty=float(sit.position),
-                avg_cost=float(sit.averageCost),
-                price=float(sit.marketPrice),
+                avg_cost=float(sit.avgCost),
+                price=float(price),
                 acquired_date=lots.get(sym.upper()),
             )
             if not sym_calls:
@@ -126,11 +167,11 @@ class IBKRGatewayClient(BrokerClient):
             for cit in sym_calls:
                 c = cit.contract
                 g = greeks.get(c.conId, {})
-                # 空头期权的 averageCost 为每张合约的权利金基础(含乘数 100)
-                open_premium = float(cit.averageCost) / 100.0
+                # 空头期权的 avgCost 为每张合约的权利金基础(含乘数 100)
+                open_premium = float(cit.avgCost) / 100.0
                 mid = g.get("mid")
                 if mid is None:
-                    mid = abs(float(cit.marketPrice))
+                    mid = open_premium  # positions() 无 marketPrice,退回开仓权利金
                 positions.append(Position(
                     ticker=sym,
                     stock=stock,
