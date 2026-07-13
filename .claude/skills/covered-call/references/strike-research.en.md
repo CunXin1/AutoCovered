@@ -9,7 +9,7 @@ stock is worth selling calls on **right now**, or **above what price** you won't
 regret it. Research the 9 dimensions below, then synthesize.
 
 **Division of labor (iron rule)**: the mechanical layer (delta band, OTM,
-DTE > 30, no earnings crossing, coverage, net credit) is already enforced by the
+DTE > 30, coverage, net credit) is already enforced by the
 engine and the propose guardrail — you neither need to nor may recompute it.
 The research layer's job is to **choose within the deterministic candidate set,
 or conclude "skip this round"**. Research cannot invent contracts outside the
@@ -39,14 +39,21 @@ SKIP = don't sell this round).
   disagree), product launches / investor days / guidance updates; for high-beta
   names also FOMC/CPI dates.
 - **Source**: positions.json events field + WebSearch cross-check.
-- **Rule**: earnings-crossing expiries are **excluded by default**; the engine's
-  exception channel (delta ≤ earnings_max_delta and ≥ earnings_min_otm_pct from
-  spot, the ⚠️ column in the candidate table) is only considered when "no
-  non-crossing candidate exists and the premium clears dimension 9's floor",
-  and the conclusion must flag the earnings risk explicitly (an earnings gap can
-  eat 20% of the distance overnight; ultra-low delta ≠ zero probability).
-  Earnings date not officially announced (sources conflict) → treat the whole
-  window as mined, lean SKIP.
+- **Rule** (disclosure; relaxed from a hard filter on 2026-07-14):
+  earnings-crossing expiries are **allowed**; the engine only stamps the ⚠️
+  column in the candidate table, and pricing the risk is this dimension's
+  disclosure duty —
+  (a) look up the earnings implied move (WebSearch "TICKER earnings implied
+  move", or gauge it from the pre/post-earnings IV gap) and compare it with the
+  strike's OTM distance: expected move near or above the distance → ↑strike or
+  pick a pre-earnings expiry; (b) an earnings-crossing candidate's premium
+  contains event premium — compare against a same-delta pre-earnings expiry;
+  the extra you collect is the fee for carrying gap risk, and the conclusion
+  must say whether that price is worth it; (c) an earnings gap can eat 20% of
+  the distance overnight; low delta ≠ zero probability — the called-away
+  scenario must appear in the conclusion. At equal annualized yield, **prefer
+  the pre-earnings expiry**. Earnings date not officially announced (sources
+  conflict) → treat the whole window as mined, lean SKIP.
 
 ## 3. Ex-dividend date (the hidden door to early assignment)
 
@@ -170,8 +177,8 @@ could go TESTED within two weeks
 A roll's new leg is also contract selection, but not all 9 dimensions run:
 
 - **Fully applicable, vote as usual**: 1 (IV — high IV is exactly when rolling
-  collects real credit), 2 (earnings — don't roll the position into an earnings
-  window), 3 (ex-dividend), 7 (cost basis & taxes — a new strike ≤ avg_cost
+  collects real credit), 2 (earnings — rolling into an earnings window requires
+  this dimension's explicit gap-risk pricing), 3 (ex-dividend), 7 (cost basis & taxes — a new strike ≤ avg_cost
   likewise requires the locked-in-loss math), 8 (liquidity — buying back the old
   leg and selling the new one crosses the spread twice), 9 (annualized floor —
   hold net-credit annualized to the same floor)

@@ -251,7 +251,11 @@ class IBKRGatewayClient(BrokerClient):
             raise RuntimeError(f"{ticker} 无法获取现价")
 
         params = ib.reqSecDefOptParams(stock.symbol, "", stock.secType, stock.conId)
-        p = next((x for x in params if x.exchange == "SMART"), params[0])
+        # SMART 下可能有多个 tradingClass(公司行动会产生 2MSFT 这类调整合约,
+        # strike 稀疏且多半 qualify 失败);标准合约的 tradingClass == ticker,优先取
+        smart = [x for x in params if x.exchange == "SMART"]
+        p = next((x for x in smart if x.tradingClass == ticker),
+                 smart[0] if smart else params[0])
 
         today = date.today()
         expiries = []

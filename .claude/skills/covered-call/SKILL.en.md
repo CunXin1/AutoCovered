@@ -48,10 +48,17 @@ this file, this file wins.
   the tickers section (lower delta + partial coverage)
 - Rolls must be net credit, unless the strike improvement is significant
   (per the roll section of config)
-- Expiries crossing earnings are excluded by default; the only exception is
-  delta ≤ earnings_max_delta (default 0.08) **and** ≥ earnings_min_otm_pct from
-  spot (default +20%) — engine-enforced filter. Such candidates carry a
-  ⚠️ earnings marker; analyses and pushes must flag the risk explicitly
+- Expiries crossing earnings are **allowed** (relaxed from the tightened
+  exception to risk-priced disclosure on 2026-07-14, same philosophy as the
+  cost-basis rule): the engine no longer filters them, it only stamps the
+  ⚠️ earnings marker. Any earnings-crossing recommendation must price the
+  event explicitly — pre-earnings IV elevation is event premium, part of what
+  you collect is payment for gap risk; compare the expected move (implied
+  move / IV level) against the strike's OTM distance, spell out the
+  "gap eats the distance overnight" scenario, and flag it in analyses and
+  pushes. Neither the engine nor the propose guardrail blocks the crossing —
+  this disclosure duty is yours alone
+  (details: references/strike-research.en.md, dimension 2)
 - Management discipline: take profit at 50–75% of max profit, or wrap up at
   21 DTE, whichever comes first
 - For shares held under 1 year, every report must note "X days to long-term
@@ -140,8 +147,9 @@ this file, this file wins.
    compute them yourself
 3. **The new leg must pass research too**: follow "Applicability to rolls" in
    `references/strike-research.en.md` — at minimum IV, earnings, ex-dividend,
-   cost basis, liquidity, and the annualized floor; rolling into an
-   earnings-crossing or below-floor leg just moves the problem later and bigger
+   cost basis, liquidity, and the annualized floor; rolling into a below-floor
+   leg just moves the problem later and bigger, and rolling into an
+   earnings-crossing leg requires dimension 2's explicit gap-risk pricing
 4. **Three-option comparison** (hard rule, see Strategy constraints):
    roll / buy back / let the shares be called away
 5. **Execution path**: the propose CLI only supports opening — **there is no

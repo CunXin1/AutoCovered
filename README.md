@@ -50,10 +50,11 @@ and — only after you tap **Approve** — can place net-credit roll orders (off
 | ⚪ ON_TRACK | default | silent |
 
 Built-in discipline (configurable): sell OTM + DTE > 30 only (QCC tax
-compliance), roll for net credit only, expiries crossing earnings require deep
-OTM (delta ≤ 0.08 **and** ≥ 20% from spot; such candidates carry a ⚠️ marker),
-partial coverage + low delta for high-volatility names, and a long-term
-capital-gains countdown flagged on positions held under a year.
+compliance), roll for net credit only, expiries crossing earnings are allowed
+but carry a ⚠️ marker (the analysis layer must price the earnings gap risk and
+event premium explicitly), partial coverage + low delta for high-volatility
+names, and a long-term capital-gains countdown flagged on positions held under
+a year.
 
 ## Quick start
 
@@ -178,7 +179,7 @@ carry risk; paper-test thoroughly before enabling live orders. MIT License.
 | ⚪ ON_TRACK | 默认 | 静默 |
 
 内置纪律(可配置):只卖 OTM + DTE>30(QCC 税务合规)、roll 只做 net credit、
-跨财报到期需超远 OTM(delta≤0.08 且距现价≥20%,候选带 ⚠️ 标记)、
+跨财报到期允许但候选带 ⚠️ 标记(财报 gap 风险与事件溢价必须由分析层显式定价)、
 高波动股部分覆盖 + 低 delta、未满一年持仓标注长期资本利得倒计时。
 
 ## 快速开始

@@ -5,7 +5,7 @@
 
 护栏设计(候选集成员资格制,不是逐项检查):
 - (strike, expiry) 必须命中 find_open_candidates 用 style 合并配置算出的
-  确定性候选集(自带 OTM / DTE≥min / delta 区间 / 不跨财报过滤)——
+  确定性候选集(自带 OTM / DTE≥min / delta 区间过滤;跨财报只标记不拦截)——
   Claude 机械上不可能把编造的合约送上手机
 - 覆盖率:允许张数 = floor(股数×coverage_ratio/100) − 现有空头(跨腿聚合)
   − 未过期待批 OPEN_CALL 张数(两条各自合规的提案不许联合超卖)
@@ -66,7 +66,7 @@ def validate_open(
                  if c.strike == strike and c.expiry == expiry), None)
     if cand is None:
         errors.append("(strike, expiry) 不在确定性候选集内"
-                      "(OTM / DTE / delta 区间 / 不跨财报 过滤后)")
+                      "(OTM / DTE / delta 区间 过滤后)")
     quote = next((q for q in chain
                   if q.strike == strike and q.expiry == expiry), None)
     if quote is None and cand is not None:
@@ -217,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
         f"覆盖率: 持股 {qty:g} × {qcc.coverage_ratio:g} − 空头 {shorts} − 待批 {pending}\n"
     )
     if cand.crosses_earnings:
-        body += (f"⚠️ 到期跨财报(已按收紧规则过滤:Δ≤{qcc.earnings_max_delta:g} "
-                 f"且距现价 ≥{qcc.earnings_min_otm_pct:.0%},被叫走概率极低但非零)\n")
+        body += ("⚠️ 到期跨财报:财报 gap 可一夜吃掉大段 OTM 距离,"
+                 "权利金含事件溢价,批准前请确认已权衡财报风险\n")
     if p.rationale:
         body += f"依据: {p.rationale}\n"
     body += (f"{args.ttl} 分钟内有效。批准后 {mode}。\n"

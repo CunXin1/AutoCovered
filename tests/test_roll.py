@@ -47,27 +47,23 @@ def test_dte_window_and_otm_and_delta_filters():
     assert [c.strike for c in out] == [110]
 
 
-def test_earnings_crossing_tightened_not_banned():
-    """跨财报不再一刀切:delta ≤ earnings_max_delta 且 OTM ≥ +20% 才放行。"""
+def test_earnings_crossing_marked_not_filtered():
+    """跨财报只打标不拦截:候选走常规规则入集,crosses_earnings 供分析层定价。"""
     earnings = TODAY + timedelta(days=40)
-    # 常规 delta(0.30)跨财报 → 拒绝(必须 ≤ 0.08)
+    # 常规 delta(0.30)跨财报 → 照常入集并打标
     out = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.30)],
-                               today=TODAY, cfg=CFG, earnings_date=earnings)
-    assert out == []
-    # delta 0.05 但 OTM 只有 +4.8%(110/105)→ 距离不够,拒绝
-    out = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.05)],
-                               today=TODAY, cfg=CFG, earnings_date=earnings)
-    assert out == []
-    # 缺 delta 跨财报 → 无法验证安全性,拒绝
-    out = find_roll_candidates(**CURRENT, chain=[q(45, 130, 6.2, 6.6, None)],
-                               today=TODAY, cfg=CFG, earnings_date=earnings)
-    assert out == []
-    # delta 0.05 且 strike 130 ≥ 105×1.2=126 → 放行并打标
-    out = find_roll_candidates(**CURRENT, chain=[q(45, 130, 6.2, 6.6, 0.05)],
                                today=TODAY, cfg=CFG, earnings_date=earnings)
     assert len(out) == 1 and out[0].crosses_earnings
     assert "跨财报" in out[0].summary()
-    # 财报在到期之后 → 常规规则,不打标
+    # 常规规则照旧生效:delta 0.45 > max_delta 0.35,跨不跨财报都拒绝
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 108, 7.0, 7.4, 0.45)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
+    assert out == []
+    # 缺 delta 与常规路径同权:roll 侧允许(与不跨财报时一致),仍打标
+    out = find_roll_candidates(**CURRENT, chain=[q(45, 130, 6.2, 6.6, None)],
+                               today=TODAY, cfg=CFG, earnings_date=earnings)
+    assert len(out) == 1 and out[0].crosses_earnings
+    # 财报在到期之后 → 不打标
     out2 = find_roll_candidates(**CURRENT, chain=[q(45, 110, 6.2, 6.6, 0.30)],
                                 today=TODAY, cfg=CFG,
                                 earnings_date=TODAY + timedelta(days=50))
@@ -77,18 +73,19 @@ def test_earnings_crossing_tightened_not_banned():
 def test_open_candidates_earnings_crossing():
     earnings = TODAY + timedelta(days=40)
     chain = [
-        q(45, 130, 0.5, 0.7, 0.06),   # ✓ delta≤0.08 且 130 ≥ 126(105×1.2)
-        q(45, 132, 0.6, 0.8, 0.12),   # delta 0.12 > 0.08 ✗
-        q(45, 120, 0.8, 1.0, 0.05),   # OTM +14% < +20% ✗
-        q(45, 131, 0.5, 0.7, None),   # 缺 delta ✗
+        q(45, 115, 1.4, 1.6, 0.22),   # ✓ delta 在默认区间 0.20–0.30,跨财报打标
+        q(45, 112, 2.0, 2.2, 0.35),   # delta 超出区间,跨不跨都 ✗
+        q(45, 120, 0.8, 1.0, 0.05),   # delta 低于区间下限 ✗(不再有跨财报特例通道)
+        q(45, 118, 1.0, 1.2, None),   # 缺 delta(开仓必须有)✗
     ]
     out = find_open_candidates(stock_price=105.0, chain=chain, today=TODAY,
                                qcc=QCC, earnings_date=earnings)
-    assert [c.strike for c in out] == [130]
+    assert [c.strike for c in out] == [115]
     assert out[0].crosses_earnings
-    # 不跨财报时常规区间照旧,且低于区间下限(0.20)的 delta 不再入选
+    # 不跨财报时同一区间过滤,唯一区别是不打标
     out2 = find_open_candidates(stock_price=105.0, chain=chain, today=TODAY, qcc=QCC)
-    assert out2 == []   # 0.06/0.12/0.05 都低于默认区间 0.20–0.30
+    assert [c.strike for c in out2] == [115]
+    assert not out2[0].crosses_earnings
 
 
 def test_debit_for_improvement():

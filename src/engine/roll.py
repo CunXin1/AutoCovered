@@ -39,7 +39,7 @@ class RollCandidate:
     net_credit: float               # premium - buyback_cost
     net_credit_annualized_pct: float
     strike_improvement_pct: float   # 相对旧 strike 的改善;开仓模式为 0
-    crosses_earnings: bool = False  # 到期跨财报(已按收紧规则过滤,仍需显式标注)
+    crosses_earnings: bool = False  # 到期跨财报(引擎只标记不拦截,分析层必须显式定价财报风险)
 
     def to_dict(self) -> dict:
         return {
@@ -86,8 +86,8 @@ def find_roll_candidates(
 
     硬过滤:DTE 在目标窗口、strike 必须 OTM(QCC)、delta 不超上限、
     默认只要 net credit(除非配置允许小 debit 换显著 strike 改善)。
-    跨财报不再一刀切禁止,改为风险定价:必须 delta ≤ earnings_max_delta
-    且 strike ≥ 现价×(1+earnings_min_otm_pct),缺 delta 时不放行。
+    跨财报不拦截:候选照常入集并置 crosses_earnings 标记,
+    财报 gap 风险与高 IV 定价由分析层显式权衡。
     """
     out: list[RollCandidate] = []
     for q in chain:
@@ -97,13 +97,7 @@ def find_roll_candidates(
         if q.strike <= stock_price:
             continue
         crosses = earnings_date is not None and today <= earnings_date <= q.expiry
-        if crosses:
-            # 跨财报特例:离得特别远才放行(delta 极低 + 强制 OTM 距离)
-            if q.delta is None or q.delta > cfg.earnings_max_delta:
-                continue
-            if q.strike < stock_price * (1 + cfg.earnings_min_otm_pct):
-                continue
-        elif q.delta is not None and q.delta > cfg.max_delta:
+        if q.delta is not None and q.delta > cfg.max_delta:
             continue
 
         net_credit = q.mid - current_mid
@@ -147,8 +141,8 @@ def find_open_candidates(
 ) -> list[RollCandidate]:
     """UNCOVERED 持仓的开仓候选:QCC 合规(OTM、DTE>min)且 delta 在目标区间。
 
-    跨财报候选不再直接排除,改走收紧规则:delta ≤ earnings_max_delta 且
-    strike ≥ 现价×(1+earnings_min_otm_pct)——即使跨财报也几乎不会被叫走。
+    跨财报候选不拦截:与常规候选走同一 delta 区间,置 crosses_earnings 标记,
+    财报 gap 风险与高 IV 定价由分析层显式权衡。
     """
     out: list[RollCandidate] = []
     for q in chain:
@@ -160,12 +154,7 @@ def find_open_candidates(
         if q.delta is None:
             continue   # 开仓必须有 delta(跨不跨财报都一样)
         crosses = earnings_date is not None and today <= earnings_date <= q.expiry
-        if crosses:
-            if q.delta > qcc.earnings_max_delta:
-                continue
-            if q.strike < stock_price * (1 + qcc.earnings_min_otm_pct):
-                continue
-        elif not (qcc.target_delta_min <= q.delta <= qcc.target_delta_max):
+        if not (qcc.target_delta_min <= q.delta <= qcc.target_delta_max):
             continue
 
         out.append(RollCandidate(

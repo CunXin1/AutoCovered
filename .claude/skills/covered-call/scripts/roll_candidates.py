@@ -57,7 +57,7 @@ def main() -> int:
     earnings = parse_date(((entry or {}).get("events") or {}).get("earnings"))
     if earnings is None:
         # 不在 positions.json 的标的(如 Schwab 持仓):直接查事件日历,
-        # 否则引擎的跨财报过滤对它们完全失效
+        # 否则引擎的跨财报标记对它们完全失效
         from src.data.events import get_events
 
         earnings = get_events(ticker).earnings
@@ -111,7 +111,7 @@ def main() -> int:
               f"覆盖比例 {qcc_cfg.coverage_ratio:g}{style_txt})\n")
 
     if not cands:
-        print("没有满足过滤条件的候选(net credit / DTE 窗口 / OTM / 不跨财报 / delta 上限)。")
+        print("没有满足过滤条件的候选(net credit / DTE 窗口 / OTM / delta 上限)。")
         return 0
 
     quote_map = {(q.strike, q.expiry): q for q in chain}
@@ -130,10 +130,8 @@ def main() -> int:
               f"| {c.premium:.2f} | {c.net_credit:+.2f} "
               f"| {c.net_credit_annualized_pct:.1%} | {c.strike_improvement_pct:+.1%} | {ew} |")
     if earnings:
-        ecfg = roll_cfg if args.mode == "roll" else qcc_cfg
-        print(f"\n注:财报日 {earnings}。跨财报候选(⚠️)按收紧规则放行:"
-              f"delta ≤ {ecfg.earnings_max_delta:g} 且距现价 ≥ "
-              f"{ecfg.earnings_min_otm_pct:.0%}。")
+        print(f"\n注:财报日 {earnings}。跨财报候选(⚠️)不再被引擎拦截:"
+              f"权利金含事件溢价,财报 gap 风险必须在分析层显式定价。")
     print("注:net credit = 新腿 mid − 旧腿买回 mid;年化 = net_credit/现价 × 365/DTE;"
           "点差% =(ask−bid)/mid,>10% 视为流动性差。")
     return 0

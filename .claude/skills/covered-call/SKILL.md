@@ -36,9 +36,13 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 - 开仓目标 delta 见 config/settings.yaml 的 qcc 段(默认 0.20–0.30);
   高波动股(NVDA/TSLA 等)看 tickers 段的 per-ticker 覆盖(更低 delta + 部分覆盖)
 - roll 只做 net credit,除非 strike 改善显著(以 roll 段配置为准)
-- 到期日跨财报默认排除;例外仅当 delta ≤ earnings_max_delta(默认 0.08)
-  **且**距现价 ≥ earnings_min_otm_pct(默认 +20%)——引擎强制过滤,
-  此类候选带 ⚠️跨财报 标记,分析和推送时必须显式提示
+- 到期日跨财报**允许**(2026-07-14 起由"收紧例外"改为风险披露,同成本线
+  规则的放宽思路):引擎不再拦截,只给候选打 ⚠️跨财报 标记。任何跨财报建议
+  必须显式定价财报风险——财报前 IV 抬升是事件溢价,收的钱里有一部分是替
+  gap 风险买单;要对比预期波动(隐含 move / IV 水位)与 strike 的 OTM 距离,
+  写明"gap 一夜吃掉距离"的情景,分析和推送时显式提示。引擎和 propose 护栏
+  不挡跨财报,这笔账是你必须自行把守的披露义务
+  (展开见 references/strike-research.md 维度 2)
 - 管理纪律:50–75% 最大利润止盈,或 21 DTE 收尾,先到者为准
 - 持仓未满 1 年的股票,报告中必须标注"距长期资本利得剩 X 天"(metrics.days_to_long_term)
 - **任何 roll/买回建议必须同时给三个选项:roll / 买回 / 让股票被叫走**,
@@ -104,7 +108,8 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
    net credit / 年化 / 新 delta 全是脚本算的,禁止自算
 3. **新腿也要过研究关**:按 `references/strike-research.md` 的
    「Roll 场景的适用性」执行 — 至少过 IV、财报、除息、成本价、流动性、年化底线;
-   roll 进一个跨财报或年化不及格的新腿,等于把问题往后挪着放大
+   roll 进年化不及格的新腿等于把问题往后挪着放大;roll 进跨财报新腿
+   必须显式定价财报 gap 风险(维度 2 的披露义务)
 4. **三选项对比**(硬规则,见策略约束):roll / 买回平仓 / 让股票被叫走
 5. **执行路径**:propose CLI 目前只支持开仓,**roll 没有提案通道** —
    用户决定 roll 后,告知需在 TWS 手动执行(先买回旧腿再卖新腿,或用 combo 单,
