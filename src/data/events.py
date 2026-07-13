@@ -90,12 +90,19 @@ def _earnings_from_finnhub(ticker: str, key: str) -> tuple[date | None, str | No
     return upcoming[0] if upcoming else (None, None)
 
 
+def upcoming_or_none(d: date | None, today: date | None = None) -> date | None:
+    """过期的事件日期视为未知。yfinance 的 Ex-Dividend Date 常是上一次除息
+    (实测 2026-07:NOK/NVDA/GOOG/AAPL 均返回过去日期),存进 events 会让
+    EVENT_RISK 规则永假、并误导读 positions.json 的分析层。"""
+    return d if d and d >= (today or date.today()) else None
+
+
 def get_events(ticker: str) -> EventDates:
     cache = _load_cache()
     entry = cache.get(ticker.upper())
     if entry and _fresh(entry):
-        return EventDates(earnings=parse_date(entry.get("earnings")),
-                          ex_div=parse_date(entry.get("ex_div")))
+        return EventDates(earnings=upcoming_or_none(parse_date(entry.get("earnings"))),
+                          ex_div=upcoming_or_none(parse_date(entry.get("ex_div"))))
 
     earnings: date | None = None
     hour: str | None = None
@@ -126,10 +133,12 @@ def get_events(ticker: str) -> EventDates:
             ex_div = parse_date(str(x)[:10])
     except Exception as e:
         log.warning("yfinance 事件日历获取失败 %s: %s", ticker, e)
-        if source is None and entry:  # 两源皆失败:保留过期旧值,好过没有
-            return EventDates(earnings=parse_date(entry.get("earnings")),
-                              ex_div=parse_date(entry.get("ex_div")))
+        if source is None and entry:  # 两源皆失败:保留旧缓存值,好过没有
+            return EventDates(earnings=upcoming_or_none(parse_date(entry.get("earnings"))),
+                              ex_div=upcoming_or_none(parse_date(entry.get("ex_div"))))
 
+    earnings = upcoming_or_none(earnings)
+    ex_div = upcoming_or_none(ex_div)
     cache[ticker.upper()] = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "earnings": earnings.isoformat() if earnings else None,

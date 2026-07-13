@@ -133,6 +133,33 @@ def evaluate(pos: Position, cfg: AlertConfig, today: date) -> StateResult:
     return StateResult(primary, flags, reasons)
 
 
+def coverage_shortfalls(positions: list[Position]) -> list[tuple[str, str, str]]:
+    """跨腿聚合的覆盖完整性检查:同(账户, 标的)的空头 call 总张数 × 100
+    不得超过正股股数,超出即裸卖敞口(理论无限风险,必须最高级别告警)。
+
+    多条腿的 Position 共享同一份正股快照,股数取组内最大值防止重复相加。
+    返回 (account, ticker, 描述) 列表,空列表 = 全覆盖。纯函数。
+    """
+    groups: dict[tuple[str, str], dict] = {}
+    for pos in positions:
+        if pos.call is None:
+            continue
+        g = groups.setdefault((pos.account, pos.ticker), {"contracts": 0, "qty": 0.0})
+        g["contracts"] += pos.call.contracts
+        g["qty"] = max(g["qty"], pos.stock.qty)
+
+    out: list[tuple[str, str, str]] = []
+    for (account, ticker), g in sorted(groups.items()):
+        need = g["contracts"] * 100
+        if need > g["qty"]:
+            acct_txt = account or "主账户"
+            out.append((account, ticker, (
+                f"{ticker}({acct_txt})空头 call 共 {g['contracts']} 张需 {need} 股,"
+                f"实持 {int(g['qty'])} 股,缺口 {int(need - g['qty'])} 股 — 裸卖敞口"
+            )))
+    return out
+
+
 def should_notify(
     prev_state: Optional[PositionState],
     result: StateResult,

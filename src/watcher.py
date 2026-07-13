@@ -32,7 +32,7 @@ from src.engine.lifecycle import (
 )
 from src.engine.pnl import compute_metrics
 from src.engine.roll import find_roll_candidates
-from src.engine.state_machine import evaluate, should_notify
+from src.engine.state_machine import coverage_shortfalls, evaluate, should_notify
 from src.execution.executor import Executor
 from src.execution.proposals import (
     APPROVED,
@@ -170,6 +170,21 @@ class Watcher:
 
             if self.enable_trigger:
                 self.trigger.maybe_trigger(pos, res)
+
+        # 覆盖完整性:call 张数超过正股 = 裸卖敞口,最高级别告警(每标的每日一次)
+        for account, ticker, reason in coverage_shortfalls(positions):
+            key = f"coverage:{account or 'primary'}:{ticker}"
+            if notify_log.get(key) != today:
+                notify_log[key] = today
+                self.notifier.push(f"🔴 裸卖敞口 {ticker}", reason, severity=4)
+                self.store.append_alert({
+                    "position_id": key,
+                    "ticker": ticker,
+                    "prev_state": None,
+                    "state": "NAKED_CALL",
+                    "reasons": [reason],
+                    "metrics": {},
+                })
 
         # 账本先于 positions.json 落盘:中途 crash 时下轮 diff 依然成立,
         # 合成事件的确定性 exec_id 保证重放幂等

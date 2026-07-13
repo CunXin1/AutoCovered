@@ -29,7 +29,8 @@ Covered call 监控 + 半自动执行系统。架构:Python watcher 管数字,Cl
 ## 结构速查
 
 engine/(纯函数:状态机/pnl/qcc/roll/lifecycle 生命周期推断)·
-brokers/(ibkr 主 + snaptrade 备,可插拔;连接自愈+executions 对账)·
+brokers/(ibkr 主 + snaptrade 备/次级,可插拔;次级=Schwab 持仓合入监控、
+IBKR 实时重定价,不入账本不发提案;连接自愈+executions 对账)·
 notify/(ntfy 双向)· execution/(提案+propose 护栏+批准执行)·
 ledger.py(SQLite 账本,exec_id 幂等)· stats.py(收益统计)·
 prompts/(注入式模板)· watcher.py(5s tick 命令 + 300s 行情周期,唯一账本写者)
