@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "snaptrade-typescript-sdk": "^10.0.18"
+  }
+}
