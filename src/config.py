@@ -17,7 +17,32 @@ PROMPTS_DIR = REPO_ROOT / "prompts"
 CONFIG_DIR = REPO_ROOT / "config"
 
 
+# SnapTrade 凭证的 .env 键名 → snaptrade 配置段键名(.env/环境变量优先于 yaml,
+# 与 scripts/snaptrade_connect.py 的约定一致;user_secret 属敏感值,不进 yaml)
+_SNAPTRADE_ENV_MAP = {
+    "SNAPTRADE_CLIENT_ID": "client_id",
+    "SNAPTRADE_CONSUMER_KEY": "consumer_key",
+    "SNAPTRADE_USER_ID": "user_id",
+    "SNAPTRADE_USER_SECRET": "user_secret",
+}
+
+
+def _read_env_file(p: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
 def load_config(path: Path | None = None) -> dict:
+    import os
+
     import yaml
 
     p = path or (CONFIG_DIR / "settings.yaml")
@@ -26,7 +51,16 @@ def load_config(path: Path | None = None) -> dict:
         log.warning("未找到 %s,使用 %s(请复制并填入真实配置)", p, example)
         p = example
     with open(p, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        cfg = yaml.safe_load(f) or {}
+
+    env = _read_env_file(REPO_ROOT / ".env")
+    snap = dict(cfg.get("snaptrade") or {})
+    for env_key, cfg_key in _SNAPTRADE_ENV_MAP.items():
+        v = os.environ.get(env_key) or env.get(env_key)
+        if v:
+            snap[cfg_key] = v
+    cfg["snaptrade"] = snap
+    return cfg
 
 
 def load_lots(path: Path | None = None) -> dict[str, date]:

@@ -6,6 +6,9 @@ brokers:
   primary: ibkr_gateway        # 主数据源:ibkr_gateway(实时 Greeks + 下单)
   fallback: ""                 # 备用数据源:snaptrade(配置好 snaptrade 段后填入)
   fallback_after_failures: 3   # 主源连续失败 N 轮后切备源
+  secondary: ""                # 次级只读持仓源:snaptrade = 每周期把外部券商(如 Schwab)
+                               # 持仓合入监控/告警,行情用主源实时重定价;
+                               # 不入账本、不发 roll 提案(按 Position.account 隔离)
 
 ibkr:
   host: 127.0.0.1
@@ -15,12 +18,12 @@ ibkr:
   account: ""
   market_data_type: 1          # 1=实时(需订阅) 2=frozen 3=延迟15分钟
 
-snaptrade:                     # 备胎:两家券商统一只读快照(pip install snaptrade-python-sdk)
-  client_id: ""
-  consumer_key: ""
-  user_id: ""
+snaptrade:                     # 外部券商只读快照(pip install snaptrade-python-sdk)
+  client_id: ""                # 推荐放 .env:SNAPTRADE_CLIENT_ID(加载时自动合并,.env 优先)
+  consumer_key: ""             # 同上:SNAPTRADE_CONSUMER_KEY
+  user_id: ""                  # Personal Key(PERS-)无需;注册制 key 由 connect 脚本写入 .env
   user_secret: ""
-  account_ids: []              # 留空 = 全部已连接账户
+  account_ids: []              # 留空 = 全部已连接账户;建议只列有持仓的账户省 API 额度
 
 schwab:                        # 二期:schwab-py 直连(注意 7 天 refresh token)
   enabled: false

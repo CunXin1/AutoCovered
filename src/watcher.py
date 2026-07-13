@@ -103,11 +103,18 @@ class Watcher:
         self.primary_kind = b.get("primary", "ibkr_gateway")
         self.fallback_kind = b.get("fallback", "") or None
         self.fallback_after = int(b.get("fallback_after_failures", 3))
+        self.secondary_kind = b.get("secondary", "") or None
 
         from src.brokers.base import build_broker
 
         self.primary = build_broker(cfg, self.primary_kind)
         self.fallback = build_broker(cfg, self.fallback_kind) if self.fallback_kind else None
+        # 次级只读持仓源(如 Schwab 经 SnapTrade):合入监控,不入账本/提案
+        self.secondary = (
+            build_broker(cfg, self.secondary_kind) if self.secondary_kind else None
+        )
+        self._secondary_cache: list[Position] = []
+        self.secondary_fail_notified = False
         self.executor.broker = self.primary if self.primary.supports_trading else None
 
         self.cmd_queue: "queue.Queue[str]" = queue.Queue()
@@ -125,6 +132,7 @@ class Watcher:
         lots = load_lots()
 
         positions, source = self._fetch_positions(lots)
+        positions = positions + self._fetch_secondary(lots)
 
         for pos in positions:
             pos.events = get_events(pos.ticker)
@@ -209,6 +217,57 @@ class Watcher:
                 )
             raise
 
+    def _fetch_secondary(self, lots) -> list[Position]:
+        """次级只读持仓源(如 Schwab 经 SnapTrade):合入监控,不入账本/提案。
+
+        持仓结构以 SnapTrade 同步为准(可能滞后数小时);行情/Greeks 每周期用
+        主源实时重定价。拉取失败退回上轮缓存并一次性降级推送,绝不打断主源周期。
+        """
+        if self.secondary is None:
+            return []
+        try:
+            self._secondary_cache = self.secondary.fetch_positions(lots)
+            if self.secondary_fail_notified:
+                self.secondary_fail_notified = False
+                self.notifier.push(
+                    "✅ 次级数据源恢复",
+                    f"{self.secondary.name} 持仓拉取已恢复", severity=1)
+        except Exception as e:
+            log.warning("次级源 %s 拉取失败,沿用上轮缓存(%d 条): %s",
+                        self.secondary.name, len(self._secondary_cache), e)
+            if not self.secondary_fail_notified:
+                self.secondary_fail_notified = True
+                self.notifier.push(
+                    "🟠 次级数据源拉取失败",
+                    f"{self.secondary.name}: {str(e)[:200]}\n"
+                    f"沿用上轮持仓快照({len(self._secondary_cache)} 条),"
+                    f"行情仍按主源实时刷新",
+                    severity=2)
+        for pos in self._secondary_cache:
+            self._reprice_secondary(pos)
+        return list(self._secondary_cache)
+
+    def _reprice_secondary(self, pos: Position) -> None:
+        """用主源实时行情覆盖次级源的滞后快照价;失败保留原值
+        (delta 缺失时 delta 类规则自动跳过,价格类规则仍有效)。"""
+        try:
+            if pos.call is not None:
+                q = self.primary.quote_option(pos.ticker, pos.call.strike, pos.call.expiry)
+                if q.get("mid"):
+                    pos.call.mid = float(q["mid"])
+                if q.get("delta") is not None:
+                    pos.call.delta = float(q["delta"])
+                if q.get("iv") is not None:
+                    pos.call.iv = float(q["iv"])
+                if q.get("stock_price"):
+                    pos.stock.price = float(q["stock_price"])
+            else:
+                px = self.primary.quote_stock(pos.ticker)
+                if px:
+                    pos.stock.price = float(px)
+        except Exception as e:
+            log.warning("%s 主源重定价失败,沿用次级源快照价: %s", pos.position_id, e)
+
     def _notify_state(self, pos, res, prev) -> None:
         prev_txt = f"(由 {prev.value} 变为)" if prev else ""
         m = pos.metrics
@@ -225,6 +284,10 @@ class Watcher:
 
     def _maybe_propose_roll(self, pos, today) -> None:
         if pos.call is None or not self.executor.propose_rolls:
+            return
+        if pos.account:
+            # 次级账户(Schwab)持仓:提案会下到主账户(IBKR)变裸卖,绝不提案;
+            # 告警/Claude 分析照常,执行由用户在对应券商手动完成
             return
         if self.executor.store.has_pending_for(pos.position_id):
             return
@@ -255,6 +318,10 @@ class Watcher:
         if not self.ledger_writes:
             return
         try:
+            # 账本作用域只有主账户:次级账户(Schwab 等)的持仓不入账本、
+            # 不参与 diff 推断(它们的成交发生在别家券商,主源 executions 里也没有)
+            positions = [p for p in positions if not p.account]
+
             now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
             # 首次启动:补录现有空头腿,当轮不做 diff
@@ -296,7 +363,8 @@ class Watcher:
             exec_events = events_from_executions(executions, kinds, roll_old)
 
             prev_positions = [Position.from_dict(d)
-                              for d in prev_raw.get("positions", [])]
+                              for d in prev_raw.get("positions", [])
+                              if not d.get("account")]
             prev_source = prev_raw.get("data_source", "")
 
             # 预取"消失且已到期"腿的官方收盘价(expired/assigned 判定)

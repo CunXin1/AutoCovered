@@ -376,8 +376,19 @@ class IBKRGatewayClient(BrokerClient):
             "ask": ask,
             "mid": mid,
             "delta": _safe(mg.delta) if mg else None,
+            "iv": _safe(mg.impliedVol) if mg else None,
             "stock_price": _safe(st.marketPrice()) or _safe(st.close),
         }
+
+    def quote_stock(self, ticker: str) -> Optional[float]:
+        """正股实时现价(次级持仓源无腿标的的重定价)。"""
+        from ib_async import Stock
+
+        ib = self._ensure()
+        stock = Stock(ticker, "SMART", "USD")
+        ib.qualifyContracts(stock)
+        [t] = ib.reqTickers(stock)
+        return _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
 
     # ------------------------------------------------------------ 下单
 

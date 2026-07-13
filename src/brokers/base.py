@@ -53,6 +53,10 @@ class BrokerClient(ABC):
         """单合约实时报价(批准执行前二次校验)。只有实时 provider 支持。"""
         raise NotImplementedError(f"{self.name} 不支持期权报价")
 
+    def quote_stock(self, ticker: str) -> Optional[float]:
+        """正股实时现价(次级持仓源的重定价)。只有实时 provider 支持。"""
+        raise NotImplementedError(f"{self.name} 不支持股票报价")
+
     def fetch_open_order_refs(self) -> set[str]:
         """在途订单 orderRef 集合(提案终态跟踪)。不支持返回空集合。"""
         return set()

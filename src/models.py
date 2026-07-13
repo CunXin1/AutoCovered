@@ -229,25 +229,35 @@ class Metrics:
 
 @dataclass
 class Position:
-    """一个 covered call 单元(正股 + 可选的一条 short call 腿)。"""
+    """一个 covered call 单元(正股 + 可选的一条 short call 腿)。
+
+    account:空 = 主账户(IBKR,账本/提案的唯一作用域);非空 = 次级只读账户
+    (如 "schwab" 经 SnapTrade)—— 只参与监控/告警,watcher 按此字段把它们
+    挡在账本 diff 和 roll 提案之外。
+    """
 
     ticker: str
     stock: StockHolding
     call: Optional[ShortCall] = None
     events: EventDates = field(default_factory=EventDates)
     metrics: Metrics = field(default_factory=Metrics)
+    account: str = ""
 
     @property
     def position_id(self) -> str:
-        """状态跟踪用的稳定 key;同一标的多条 call 腿各算一个持仓。"""
+        """状态跟踪用的稳定 key;同一标的多条 call 腿各算一个持仓,
+        次级账户带 @account 后缀,与主账户同标的不撞 key。"""
         if not self.call:
-            return self.ticker
-        return f"{self.ticker} {self.call.expiry.strftime('%y%m%d')}C{self.call.strike:g}"
+            base = self.ticker
+        else:
+            base = f"{self.ticker} {self.call.expiry.strftime('%y%m%d')}C{self.call.strike:g}"
+        return f"{base}@{self.account}" if self.account else base
 
     def to_dict(self) -> dict:
         return {
             "id": self.position_id,
             "ticker": self.ticker,
+            "account": self.account,
             "stock": self.stock.to_dict(),
             "call": self.call.to_dict() if self.call else None,
             "events": self.events.to_dict(),
@@ -262,6 +272,7 @@ class Position:
             call=ShortCall.from_dict(d["call"]) if d.get("call") else None,
             events=EventDates.from_dict(d.get("events")),
             metrics=Metrics.from_dict(d.get("metrics")),
+            account=d.get("account", "") or "",
         )
 
 
