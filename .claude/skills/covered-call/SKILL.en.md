@@ -34,9 +34,14 @@ this file, this file wins.
 
 - Qualified Covered Calls only: OTM strike and opening DTE > 30 (an ITM call
   suspends/resets the stock's holding period)
-- **Strike must be > cost basis (stock.avg_cost)** — being called away below cost
-  locks in a loss that no premium justifies. Neither the engine nor the propose
-  guardrail checks this; **you are the only line of defense**
+- Strike **may** sit below cost basis (stock.avg_cost) — underwater recovery
+  mode; relaxed from a hard ban to risk-priced disclosure on 2026-07-13, same
+  philosophy as the earnings-crossing rule. Any recommendation with
+  strike ≤ avg_cost must spell out the **locked-in-loss math**: if called away,
+  per-share locked loss = avg_cost − strike − cumulative premiums collected;
+  state the net result and the counterargument (a rebound through the strike
+  turns a paper loss into a realized one). Neither the engine nor the propose
+  guardrail checks the cost line — this disclosure duty is yours alone
   (details: references/strike-research.en.md, dimension 7)
 - Opening target delta: see the qcc section of config/settings.yaml (default
   0.20–0.30); high-volatility names (NVDA/TSLA etc.) use per-ticker overrides in

@@ -98,9 +98,15 @@ SKIP = don't sell this round).
   tax status.
 - **Source**: positions.json stock.avg_cost and metrics.days_to_long_term —
   the only source.
-- **Rule (hard)**: **strike must be > avg_cost**, otherwise being called away =
-  locking in a loss and no premium justifies it (CRWV is currently stuck on
-  exactly this); days_to_long_term < DTE with a sizable unrealized gain →
+- **Rule (disclosure; relaxed from a hard ban on 2026-07-13)**:
+  strike ≤ avg_cost is **allowed** (underwater recovery mode), at the price of
+  showing the **locked-in-loss math** in the conclusion: if called away,
+  per-share locked loss = avg_cost − strike − cumulative premiums collected;
+  state the net result. For equal premium prefer the highest strike that still
+  clears dimension 9's floor; on underwater names weight dimension 5's vote
+  (rebound risk) heavily — a rebound through a low strike turns a paper loss
+  into a realized one; if planning to re-buy after assignment, flag the 30-day
+  wash-sale window. days_to_long_term < DTE with a sizable unrealized gain →
   assignment converts long-term rates to short-term, ↑strike or SKIP until past
   the line; QCC (OTM + DTE > 30) is engine-enforced.
 
@@ -132,9 +138,11 @@ SKIP = don't sell this round).
    if useful).
 2. Research each dimension per the table above; each yields: finding (one line)
    + source + vote (↑strike / ↓DTE / fewer contracts / SKIP / neutral).
-3. Synthesize: **any dimension tripping a hard rule (strike ≤ cost,
-   spread > 20%, annualized < floor) → SKIP outright or switch candidates**;
-   ≥ 2 dimensions voting SKIP → don't sell this round; otherwise pick the
+3. Synthesize: **any dimension tripping a hard rule (spread > 20%,
+   annualized < floor) → SKIP outright or switch candidates**; a
+   strike ≤ cost candidate is only eligible with dimension 7's locked-in-loss
+   math attached, and on such a candidate dimension 5's rebound risk carries
+   veto weight; ≥ 2 dimensions voting SKIP → don't sell this round; otherwise pick the
    candidate satisfying the most ↑strike votes, defaulting DTE to 31–45
    (steepest theta decay) unless dimensions 2/3 force shorter.
 4. Output the **decision table** (template below) + final conclusion:
@@ -163,17 +171,18 @@ A roll's new leg is also contract selection, but not all 9 dimensions run:
 
 - **Fully applicable, vote as usual**: 1 (IV — high IV is exactly when rolling
   collects real credit), 2 (earnings — don't roll the position into an earnings
-  window), 3 (ex-dividend), 7 (cost basis & taxes — the new strike must still
-  be > avg_cost), 8 (liquidity — buying back the old leg and selling the new one
-  crosses the spread twice), 9 (annualized floor — hold net-credit annualized to
-  the same floor)
+  window), 3 (ex-dividend), 7 (cost basis & taxes — a new strike ≤ avg_cost
+  likewise requires the locked-in-loss math), 8 (liquidity — buying back the old
+  leg and selling the new one crosses the spread twice), 9 (annualized floor —
+  hold net-credit annualized to the same floor)
 - **Reference only, no veto power**: 4 (resistance), 5 (trend), 6 (targets) —
   a tested/breached position means the trend is already against you; these three
   mainly inform "how far to roll"
-- **Hard vetoes unchanged in synthesis**: new strike ≤ cost, spread > 20%,
-  annualized < floor → that candidate is disqualified. If the whole candidate
-  set fails, the conclusion is buy back or let the shares be called away —
-  never lower the bar just to "roll out of it"
+- **Hard vetoes in synthesis**: spread > 20%, annualized < floor → that
+  candidate is disqualified; a new strike ≤ cost requires dimension 7's
+  locked-in-loss math plus an honest answer to "is this roll just refusing to
+  take the loss". If the whole candidate set fails, the conclusion is buy back
+  or let the shares be called away — never lower the bar just to "roll out of it"
 
 ## Interfaces with the rest of the system
 
