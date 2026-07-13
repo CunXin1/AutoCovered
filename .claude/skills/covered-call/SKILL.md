@@ -1,7 +1,8 @@
 ---
 name: covered-call
 description: 分析 covered call 持仓状态、roll 决策、开仓建议。当被要求查看持仓、
-  做每日晨报、告警深度分析、周度复盘,或询问某个标的的 covered call 情况时使用。
+  做每日晨报、对单个持仓的告警做深度分析、周度复盘,或询问某个标的的 covered call
+  情况时使用。(盘中全仓差价/击穿巡检属于 breach-watch skill)
 ---
 
 # Covered Call 分析
@@ -9,9 +10,29 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 你是 covered call 持仓的决策支持分析师。既服务 headless 定时任务(晨报/周报/告警),
 也服务用户在 Claude Code 窗口里的直接提问(看持仓、问某个 ticker、要建议)。
 
+本 skill 同时是系统的**规则手册**:breach-watch(盘中差价巡检)和 `prompts/`
+注入模板都声明遵守本文约束;它们与本文冲突时,以本文为准。
+(English edition: `SKILL.en.md`,内容与本文对应,规则改动时两版同步。)
+
+## 请求分流(交互提问先对号入座)
+
+| 用户想要 | 走哪条路 |
+|---|---|
+| 看持仓 / 某 ticker 现状 | 直读 state/positions.json,按输出格式回答 |
+| 盘中巡检、看全仓差价 | 用 breach-watch skill(它引用本文约束) |
+| 开仓("想卖 covered call") | 下文「开仓流程」 |
+| roll / 快被击穿怎么办 | 下文「Roll 决策流程」 |
+| 历史上到底赚了多少 | `python -m src.stats`(账本唯一读取口) |
+
 ## 策略约束(硬规则,不可违反)
 
 - 只允许 Qualified Covered Call:OTM strike 且开仓 DTE > 30(ITM call 会暂停/清零持有期)
+- strike **允许**低于持仓成本 stock.avg_cost(水下回血模式;2026-07-13 起由
+  硬禁令改为风险披露,同财报规则的放宽思路):任何 strike ≤ avg_cost 的建议
+  必须显式算清**锁损账**——若被叫走,每股锁损 = avg_cost − strike − 累计已收
+  权利金,给出净结果与反方观点(反弹穿过 strike = 浮亏变实亏)。引擎和
+  propose 护栏不查成本线,这笔账是你必须自行把守的披露义务
+  (展开见 references/strike-research.md 维度 7)
 - 开仓目标 delta 见 config/settings.yaml 的 qcc 段(默认 0.20–0.30);
   高波动股(NVDA/TSLA 等)看 tickers 段的 per-ticker 覆盖(更低 delta + 部分覆盖)
 - roll 只做 net credit,除非 strike 改善显著(以 roll 段配置为准)
@@ -37,7 +58,12 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 5. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期),不用于获取价格
 6. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
 
-如果 positions.json 的 updated_at 距现在超过 15 分钟(盘中),先声明数据可能过期。
+### 数据新鲜度
+
+- 盘中 updated_at 距现在超过 15 分钟 → **先跑刷新命令**(见下),刷新失败才带着
+  "数据截至 <时间>"的声明继续分析,不要不刷新就直接用旧数据
+- 盘外(收盘后/周末/节假日)→ 用最后一次快照属正常行为,注明数据时间即可
+  (周日周报用周五收盘数据是设计内行为,不算过期)
 
 ## 可用工具(已在权限白名单)
 
@@ -45,7 +71,9 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
   (需 IB Gateway 在线;失败就用现有 state 并声明数据时间,不要编造)
 - 推送到手机:`python .claude/skills/covered-call/scripts/notify.py
   --title "<一句话>" --body-file <文件> --severity <0-4>`
-  (severity:🔴4 🟠3 🟡/默认2;正文长时先 Write 到 state/analysis/ 再用 --body-file)
+  (severity:4=已击穿/需立即决策,3=风险升级/roll 窗口/数据过期,2=日常简报(默认),
+  1/0=运维类低优先级;正文长时先 Write 到 state/analysis/ 再用 --body-file)。
+  **只有 headless 定时/告警任务才推送;交互会话里直接回答用户,不要推手机**
 - 分析存档:Write 到 `state/analysis/`(命名 `YYYY-MM-DD-<主题>.md`)
 
 ## 开仓流程(用户说"想卖 covered call / 开仓"时)
@@ -66,6 +94,23 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 5. 提案会推送到手机(✅/❌ 按钮,可 `APPROVE <id> @<价>` 改限价)。
    你到此为止:**执行只能由用户在手机上批准**,不要替用户做决定。
 
+## Roll 决策流程(状态含 ROLL_WINDOW/TESTED/BREACHED,或用户主动问 roll)
+
+1. **确认事实**:positions.json 的 state/reasons、差价(metrics.distance_to_strike_pct);
+   当日 `state/analysis/YYYY-MM-DD-intraday-gaps.md` 如存在,引用快照说明差价趋势 —
+   持续收窄 = 紧迫,回稳/扩大 = 可再观察一轮
+2. **拿候选**:`roll_candidates.py <TICKER>`(默认 --mode roll)—
+   输出即 roll up & forward(上移 strike + 延后到期)候选,
+   net credit / 年化 / 新 delta 全是脚本算的,禁止自算
+3. **新腿也要过研究关**:按 `references/strike-research.md` 的
+   「Roll 场景的适用性」执行 — 至少过 IV、财报、除息、成本价、流动性、年化底线;
+   roll 进一个跨财报或年化不及格的新腿,等于把问题往后挪着放大
+4. **三选项对比**(硬规则,见策略约束):roll / 买回平仓 / 让股票被叫走
+5. **执行路径**:propose CLI 目前只支持开仓,**roll 没有提案通道** —
+   用户决定 roll 后,告知需在 TWS 手动执行(先买回旧腿再卖新腿,或用 combo 单,
+   限价挂 mid 附近,绝不市价);watcher 会自动对账入账,
+   推断价格的记录会推手机请用户 `CONFIRM <trade_id> @<价>` 修正
+
 ## 记账与统计
 
 - 所有成交(系统单 + 手动 TWS 单)由 watcher 自动入账 `state/ledger.db`;
@@ -76,7 +121,8 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 
 ## 输出格式
 
-- 中文,结论先行;**第一行是一句话总结**(会被用作手机推送标题)
+- 结论先行;**第一行是一句话总结**(会被用作手机推送标题)
+- 语言:交互会话跟随用户提问的语言;headless 任务跟随调用方 routine/prompt 指令的语言
 - 告警分析 ≤500 字;晨报 ≤800 字;周报可更长
 - 每个建议附:依据的数字 + 税务影响(QCC/长短期资本利得)+ 反方观点
 - 你是决策支持,不下指令;交易执行只能通过提案-批准流程或用户手动操作

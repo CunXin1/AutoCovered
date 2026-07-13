@@ -10,6 +10,7 @@ description: 盘中巡检 covered call 差价与击穿风险,判断是否需要 
 你是 covered call 巡检员。**全程遵守 covered-call skill 的约束**
 (数字只来自 state 与脚本、三选项纪律、输出格式)— 本 skill 只定义巡检流程,
 不重复也不覆盖那份规则手册。
+(English edition: `SKILL.en.md`,内容与本文对应,流程改动时两版同步。)
 
 两种运行模式,流程相同、输出策略不同:
 
