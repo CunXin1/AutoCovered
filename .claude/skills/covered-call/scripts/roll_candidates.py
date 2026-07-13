@@ -55,6 +55,12 @@ def main() -> int:
     except (OSError, json.JSONDecodeError):
         pass
     earnings = parse_date(((entry or {}).get("events") or {}).get("earnings"))
+    if earnings is None:
+        # 不在 positions.json 的标的(如 Schwab 持仓):直接查事件日历,
+        # 否则引擎的跨财报过滤对它们完全失效
+        from src.data.events import get_events
+
+        earnings = get_events(ticker).earnings
 
     # 拉实时期权链(独立 client_id,不抢 watcher 连接)
     ib_cfg = dict(cfg.get("ibkr") or {})
