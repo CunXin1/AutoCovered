@@ -1,15 +1,147 @@
 # AutoCovered
 
-**Covered call lifecycle automation: a deterministic Python watcher for the numbers, Claude Code for the judgment, and your phone for approvals.**
+**Covered-call lifecycle automation: a deterministic Python watcher for the numbers, Claude Code for the judgment, and your phone for approvals.**
 
-Monitors covered call positions (IBKR / Schwab) every 5 minutes, runs a tested
+*English | [中文](#中文)*
+
+Monitors covered-call positions (IBKR / Schwab) every 5 minutes, runs a tested
 P&L state machine, pushes alerts *with suggestions* to your phone (ntfy, two-way),
 generates AI morning briefings / weekly reviews / event deep-dives via Claude Code,
 and — only after you tap **Approve** — can place net-credit roll orders (off by default).
 
-> 核心纪律:**Python 管数字,Claude 管叙述**。所有 P&L/delta/net credit 由确定性
-> Python 计算并写入 `state/positions.json`;Claude 只读这份事实做新闻融合、方案
-> 对比与税务解释 — 它没有机会幻觉任何数字。
+> **Core discipline: Python owns the numbers, Claude owns the narrative.** Every
+> P&L / delta / net-credit figure is computed deterministically by Python and
+> written to `state/positions.json`. Claude only *reads* those facts to fuse news,
+> compare options, and explain tax implications — it never has a chance to
+> hallucinate a number.
+
+## Architecture
+
+```
+[IBKR Gateway]──ib_async (live Greeks, primary)──┐
+[SnapTrade]────read-only snapshot (2 brokers, fallback)──┤  brokers/ pluggable
+                                                 ▼
+┌─ Watcher (Python daemon, no LLM) ─────────────────────────────┐
+│ every 5 min: positions + Greeks → state machine → positions.json │
+│ state transition → ntfy push to phone (numbers + suggestion)     │
+│ 🟠🔴 → roll proposal (✅approve / ❌reject buttons) + trigger Claude │
+└──────────────────┬────────────────────────────────────────────┘
+                   │ state/ is the only interface
+┌──────────────────▼────────────────────────────────────────────┐
+│ Claude Code: morning briefing (trading day 6:15) / weekly (Sun) │
+│ reads state + runs deterministic scripts + WebSearch news       │
+│ Also interactive in the Claude Code window: "check my positions" │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## State machine (10 states)
+
+| State | Trigger | Action |
+|---|---|---|
+| 🔴 BREACHED | spot > strike | immediate push + roll proposal + Claude 3-way analysis (roll / buy-back / let it get called) |
+| 🟠 ROLL_WINDOW | delta ≥ 0.60 and 14–30 DTE | push + proposal + option comparison |
+| 🟠 EVENT_RISK | expiry crosses earnings / high delta before ex-div | push 3 days ahead |
+| 🟡 TESTED | within 3% of strike or delta ≥ 0.45 | push + Claude checks news to explain the move |
+| 🟡 OPTION_LOSS | call-leg buy-back cost ≥ 2× premium | push stop-loss suggestion |
+| 🟡 EXPIRING | DTE ≤ 7 | daily reminder |
+| 🟡 MANAGE_DTE | DTE ≤ 21 | management-window reminder (dodge gamma) |
+| 🟢 PROFIT_TAKE | ≥ 50% of premium earned back | can close to lock in |
+| ⚪ UNCOVERED | ≥ 100 shares, no call | briefing suggests QCC-compliant open candidates |
+| ⚪ ON_TRACK | default | silent |
+
+Built-in discipline (configurable): sell OTM + DTE > 30 only (QCC tax
+compliance), roll for net credit only, expiries crossing earnings require deep
+OTM (delta ≤ 0.08 **and** ≥ 20% from spot; such candidates carry a ⚠️ marker),
+partial coverage + low delta for high-volatility names, and a long-term
+capital-gains countdown flagged on positions held under a year.
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+cp config/settings.example.yaml config/settings.yaml   # fill in ntfy topic, IBKR port
+cp config/lots.example.yaml config/lots.yaml           # fill in open dates (for tax)
+python -m pytest                                       # engine tests should all pass
+python -m src.watcher --once                           # one smoke tick (needs IB Gateway, paper 7497)
+```
+
+> On Windows, use `copy config\settings.example.yaml config\settings.yaml`.
+
+For a resident deployment (macOS launchd / Windows Task Scheduler) see
+[`deploy/README.md`](deploy/README.md).
+
+**Phone:** install the [ntfy](https://ntfy.sh) app and subscribe to the two
+topics you named in `settings.yaml` (the topic name *is* the password — use a
+long random string). Commands: `STATUS` / `ANALYZE NVDA` / `APPROVE <proposal-id>`
+/ `REJECT <proposal-id>` (proposal pushes ship with buttons).
+
+## Semi-automatic execution (off by default)
+
+Out of the box this is a pure decision-support tool. Turning on semi-auto passes
+three gates, recommended in order:
+
+1. `execution.enabled: true` + `dry_run: true` → simulate fills after approval, rehearse first
+2. **paper account** (port 7497 / 4002) to test the combo order-symbol convention
+3. Only then set `dry_run: false`. Daily order cap, 30-minute proposal expiry, limit orders only.
+
+The system **never** places an order without approval from your phone.
+There is no fully automatic mode, and none will be added.
+
+## Three modules
+
+1. **Opening (semi-auto):** in the Claude Code window say "open a call on NVDA" →
+   Claude runs the deterministic candidate script
+   (`--style conservative|aggressive`; per-ticker coverage is a hard cap) +
+   WebSearch research → once you pick, the `propose` CLI validates candidate-set
+   membership + coverage against live quotes → pushes to phone (✅/❌ buttons,
+   `APPROVE <id> @<price>` to adjust the limit) → on approval the executor
+   re-validates and places a SELL limit order (DAY, attributed via orderRef).
+2. **Monitoring:** the watcher runs the state machine every 5 minutes; on
+   approach/breach of a strike (TESTED / BREACHED) it pushes to your phone and
+   triggers Claude to analyze the 3-way roll decision.
+3. **Ledger & stats:** every fill (system order + manual TWS order) is reconciled
+   into a SQLite ledger via IBKR executions (`state/ledger.db`, idempotent on
+   exec_id); expiry/assignment is inferred from position diff + official close,
+   and an inferred price can be corrected with `CONFIRM <trade_id> @<price>`.
+   `python -m src.stats` reports per-ticker realized P&L, round-level and
+   roll-chain win rates, a data-quality tier, and upside given up when called away.
+
+## Using it inside Claude Code
+
+This repo ships a `covered-call` skill. Open Claude Code in the repo directory
+and just say: "check my positions" / "run a morning briefing" / "should I roll
+that NVDA call now" / "open a call on MSFT, keep it conservative" / "how much
+have I made selling CCs per ticker".
+
+**Claude Code scheduled tasks:** the `routines/` directory holds three
+Claude-facing task instructions — morning briefing (trading day 6:15), intraday
+breach/roll patrol (every 2 hours, pushes only on risk), and weekly review
+(Sunday). See [`routines/README.md`](routines/README.md) to register them; the
+traditional OS-scheduler route is in [`deploy/README.md`](deploy/README.md) —
+pick one, not both.
+
+## Disclaimer
+
+This is a personal decision-support tool and is **not investment advice**. Its
+tax logic is a simplified internal discipline (the OTM + DTE > 30 sufficient
+condition for a Qualified Covered Call), not a basis for filing taxes. Options
+carry risk; paper-test thoroughly before enabling live orders. MIT License.
+
+---
+
+# 中文
+
+**Covered call 生命周期自动化:确定性 Python watcher 管数字,Claude Code 管判断,手机管批准。**
+
+*[English](#autocovered) | 中文*
+
+每 5 分钟监控 covered call 持仓(IBKR / Schwab),跑一套有测试的 P&L 状态机,
+把带*建议*的告警推到手机(ntfy,双向),用 Claude Code 生成 AI 晨报 / 周报 /
+事件深度分析,并且——只在你点了 **Approve** 之后——才下 net credit 的 roll 单(默认关闭)。
+
+> 核心纪律:**Python 管数字,Claude 管叙述**。所有 P&L / delta / net credit 由
+> 确定性 Python 计算并写入 `state/positions.json`;Claude 只读这份事实做新闻融合、
+> 方案对比与税务解释——它没有机会幻觉任何数字。
 
 ## 架构
 
@@ -53,13 +185,15 @@ and — only after you tap **Approve** — can place net-credit roll orders (off
 
 ```bash
 pip install -r requirements.txt
-copy config\settings.example.yaml config\settings.yaml   # 填 ntfy topic、IBKR 端口
-copy config\lots.example.yaml config\lots.yaml           # 填建仓日期(税务)
-python -m pytest                                         # 引擎测试应全绿
-python -m src.watcher --once                             # 单轮冒烟(需 IB Gateway,paper 7497)
+cp config/settings.example.yaml config/settings.yaml   # 填 ntfy topic、IBKR 端口
+cp config/lots.example.yaml config/lots.yaml           # 填建仓日期(税务)
+python -m pytest                                       # 引擎测试应全绿
+python -m src.watcher --once                           # 单轮冒烟(需 IB Gateway,paper 7497)
 ```
 
-常驻部署(Windows Task Scheduler / macOS launchd)见 [`deploy/README.md`](deploy/README.md)。
+> Windows 用 `copy config\settings.example.yaml config\settings.yaml`。
+
+常驻部署(macOS launchd / Windows Task Scheduler)见 [`deploy/README.md`](deploy/README.md)。
 
 手机端:装 [ntfy](https://ntfy.sh) App,订阅你在 settings.yaml 里起的两个 topic
 (topic 名等于密码,用随机长字符串)。可用命令:`STATUS` / `ANALYZE NVDA` /

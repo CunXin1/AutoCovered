@@ -8,7 +8,7 @@
 | 指令文件 | 建议调度 | 干什么 |
 |---|---|---|
 | `daily-briefing.md` | 交易日 06:15 | 晨报:持仓总览+开仓建议+新闻+事件日历 |
-| `breach-roll-check.md` | 盘中每 2 小时 | **击穿防线/该不该 roll 巡检**,有风险才推送 |
+| `breach-roll-check.md` | 盘中每 2 小时 | **击穿防线/差价/该不该 roll 巡检**(执行 breach-watch skill),有风险才推送 |
 | `weekly-review.md` | 周日 18:00 | 周报:roll 计划+收益核算+QCC 审计 |
 
 ## 怎么注册(三选一)
@@ -18,7 +18,7 @@
 侧边栏 → **Routines** → **New routine** → 选 **Local**(必须选 Local,
 云端 routine 读不到本地 state 文件!)→ 指令栏填:
 
-> 在 C:\Users\Ruibo's Desktop\Documents\AutoCovered 目录下,阅读并严格执行
+> 在 <AutoCovered 仓库的绝对路径> 目录下,阅读并严格执行
 > routines/daily-briefing.md 的指令。
 
 设好时间后先点 **Run now** 测试一遍。三个任务各建一条。

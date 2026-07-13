@@ -1,16 +1,31 @@
-# 个人数据与秘密 — 绝不提交
+# --- Personal data & secrets — NEVER commit / 个人数据与秘密 — 绝不提交 ---
 config/settings.yaml
 config/lots.yaml
 state/*
 !state/.gitkeep
 
-# Python
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
 .venv/
 venv/
+env/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# 本地杂项
-*.log
+# --- SQLite (ledger lives under state/, guard the WAL/SHM sidecars anywhere) ---
+*.db
+*.db-shm
+*.db-wal
+
+# --- Local Claude Code / editor settings ---
 .claude/settings.local.json
+.idea/
+.vscode/
+
+# --- OS junk / logs / 本地杂项 ---
+.DS_Store
+Thumbs.db
+*.log
