@@ -119,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=float, default=None, help="每股限价,缺省取 mid 向下 0.05 档")
     ap.add_argument("--rationale", default="", help="研究依据(叙述,不用于任何数字)")
     ap.add_argument("--ttl", type=int, default=DEFAULT_TTL_MINUTES)
+    ap.add_argument("--account", default=None,
+                    help="下单账户(该标的只在一个账户持有时可省略)")
     args = ap.parse_args(argv)
     ticker = args.ticker.upper()
     expiry = date.fromisoformat(args.expiry)
@@ -137,20 +139,49 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError):
         print("错误: 读不到 state/positions.json,请先跑 python -m src.watcher --once")
         return 1
-    qty, shorts, earnings = 0.0, 0, None
+    # 覆盖率按账户算:跨账户持有同一标的时,A 账户的股票覆盖不了 B 账户的 call。
+    # 聚合必须先分账户,否则两个账户合起来"够覆盖"的提案在任一账户里都是裸卖。
+    books: dict[str, dict] = {}
+    earnings = None
     for d in raw.get("positions", []):
         if d.get("ticker", "").upper() != ticker:
             continue
-        qty = max(qty, float((d.get("stock") or {}).get("qty", 0)))
+        if d.get("external"):
+            print(f"跳过外部只读账户持仓 {d.get('id')}(本系统下不了那家券商的单)")
+            continue
+        acct = d.get("account", "") or ""
+        b = books.setdefault(acct, {"qty": 0.0, "shorts": 0})
+        b["qty"] = max(b["qty"], float((d.get("stock") or {}).get("qty", 0)))
         if d.get("call"):
-            shorts += int(d["call"].get("contracts", 0))
+            b["shorts"] += int(d["call"].get("contracts", 0))
         earnings = earnings or parse_date(((d.get("events") or {}).get("earnings")))
-    if qty <= 0:
+
+    if not books:
         print(f"错误: positions.json 中没有 {ticker} 的正股持仓")
         return 1
 
+    account = args.account
+    if account is None:
+        if len(books) > 1:
+            print(f"错误: {ticker} 在多个账户都有持仓,必须用 --account 指定下单账户:")
+            for a, b in sorted(books.items()):
+                print(f"  --account {a or '(默认)'}  →  {int(b['qty'])} 股,"
+                      f"已有空头 {b['shorts']} 张")
+            return 1
+        account = next(iter(books))
+    elif account not in books:
+        print(f"错误: {ticker} 在账户 {account} 没有正股持仓"
+              f"(有持仓的账户: {', '.join(sorted(a or '(默认)' for a in books))})")
+        return 1
+
+    qty = books[account]["qty"]
+    shorts = books[account]["shorts"]
+    if qty <= 0:
+        print(f"错误: 账户 {account} 的 {ticker} 正股股数为 0")
+        return 1
+
     store = ProposalStore(STATE_DIR / "proposals.json")
-    pending = store.pending_open_contracts(ticker)
+    pending = store.pending_open_contracts(ticker, account)
 
     # ---- 实时候选集(独立 client_id,不抢 watcher/候选脚本连接)
     from src.brokers.ibkr import IBKRGatewayClient
@@ -196,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     p = Proposal.new(
-        kind="OPEN_CALL", ticker=ticker, position_id=ticker,
+        kind="OPEN_CALL", ticker=ticker,
+        position_id=f"{ticker}@{account}" if account else ticker,
+        account=account,
         legs=[ProposalLeg("SELL", args.strike, expiry, args.contracts)],
         limit_net_credit=limit,
         rationale=(args.rationale or "").strip()[:400],

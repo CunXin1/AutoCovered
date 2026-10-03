@@ -53,12 +53,18 @@ EXPIRY_GRAY_BAND = 0.005
 
 @dataclass(frozen=True)
 class CallKey:
+    """一条空头 call 合约的身份。account 参与身份:同一合约可同时存在于
+    主券商的多个账户,各自的覆盖与指派必须分开算(账户间的股票不能互相覆盖)。
+    默认空 = 单账户场景,__str__ 保持原样,exec_id 幂等键不变。"""
+
     ticker: str
     strike: float
     expiry: date
+    account: str = ""
 
     def __str__(self) -> str:
-        return f"{self.ticker}:{self.strike:g}:{self.expiry.isoformat()}"
+        base = f"{self.ticker}:{self.strike:g}:{self.expiry.isoformat()}"
+        return f"{base}@{self.account}" if self.account else base
 
 
 @dataclass
@@ -75,10 +81,11 @@ class ExecutionRecord:
     price: float
     fees: float = 0.0
     order_ref: str = ""      # 本系统单 = proposal id;手动 TWS 单为空
+    account: str = ""        # 成交所属账户(IBKR execution.acctNumber)
 
     @property
     def key(self) -> CallKey:
-        return CallKey(self.ticker, self.strike, self.expiry)
+        return CallKey(self.ticker, self.strike, self.expiry, self.account)
 
 
 @dataclass
@@ -102,10 +109,11 @@ class TradeEvent:
     rolled_from: Optional[CallKey] = None  # 开仓事件:roll 链上游合约
     needs_confirm: bool = False
     aux_price: Optional[float] = None      # ASSIGN:到期收盘价(算 upside_forgone 用)
+    account: str = ""        # 持仓/成交所属账户
 
     @property
     def key(self) -> CallKey:
-        return CallKey(self.ticker, self.strike, self.expiry)
+        return CallKey(self.ticker, self.strike, self.expiry, self.account)
 
 
 @dataclass
@@ -143,6 +151,7 @@ def events_from_executions(
             source="executor" if e.order_ref else "manual_tws",
             price_quality="exact",
             proposal_id=e.order_ref,
+            account=e.account,
             outcome=OUT_ROLLED if (is_roll and e.action == BUY_TO_CLOSE) else "",
             rolled_from=roll_old_keys.get(e.order_ref) if (
                 is_roll and e.action == SELL_TO_OPEN) else None,
@@ -153,16 +162,22 @@ def events_from_executions(
 # ---------------------------------------------------------------- 持仓 diff
 
 
-def _call_maps(positions: list[Position]) -> tuple[dict[CallKey, ShortCall], dict[str, float]]:
-    """(key→空头腿, ticker→股数)。同 ticker 多腿共享同一份 stock,取首见。"""
+def _call_maps(
+    positions: list[Position],
+) -> tuple[dict[CallKey, ShortCall], dict[tuple[str, str], float]]:
+    """(key→空头腿, (账户,标的)→股数)。同 (账户,标的) 多腿共享同一份 stock,取首见。
+
+    股数必须按账户分桶:跨账户持有同一标的时,A 账户的股票覆盖不了 B 账户的 call,
+    指派推断的"股数下降预算"也只能在同一账户内分摊。
+    """
     calls: dict[CallKey, ShortCall] = {}
-    qty: dict[str, float] = {}
+    qty: dict[tuple[str, str], float] = {}
     for p in positions:
-        qty.setdefault(p.ticker, p.stock.qty)
+        qty.setdefault((p.account, p.ticker), p.stock.qty)
         if p.call is not None:
-            k = CallKey(p.ticker, p.call.strike, p.call.expiry)
+            k = CallKey(p.ticker, p.call.strike, p.call.expiry, p.account)
             if k in calls:
-                # 同合约多条目(理论上不该发生):张数合并,防重复计数
+                # 同账户同合约多条目(理论上不该发生):张数合并,防重复计数
                 calls[k].contracts += p.call.contracts
             else:
                 calls[k] = ShortCall(**{**p.call.__dict__})
@@ -229,14 +244,15 @@ def diff_positions(
         if gone > 0:
             pending_close[k] = gone
 
-    # ---- 指派分摊:ticker 级股数下降,ITM 优先(strike 升序)
+    # ---- 指派分摊:(账户, 标的) 级股数下降,ITM 优先(strike 升序)
     assigns: dict[CallKey, int] = {}
-    for ticker in {k.ticker for k in pending_close}:
-        drop = prev_qty.get(ticker, 0.0) - curr_qty.get(ticker, 0.0)
+    for bucket in {(k.account, k.ticker) for k in pending_close}:
+        drop = prev_qty.get(bucket, 0.0) - curr_qty.get(bucket, 0.0)
         budget = int(drop // 100) if drop > 0 else 0
         if budget <= 0:
             continue
-        for k in sorted((k for k in pending_close if k.ticker == ticker),
+        for k in sorted((k for k in pending_close
+                         if (k.account, k.ticker) == bucket),
                         key=lambda k: k.strike):
             if budget <= 0:
                 break
@@ -272,7 +288,7 @@ def diff_positions(
                      else f"synthetic:ASSIGN:{k}:{today.isoformat()}"),
             ts=_expiry_eod_iso(k.expiry) if at_expiry else now_iso,
             ticker=k.ticker, action=ASSIGN, strike=k.strike, expiry=k.expiry,
-            contracts=n, price=0.0,
+            contracts=n, price=0.0, account=k.account,
             source="inferred", price_quality="exact",
             outcome=OUT_ASSIGNED,
             note="股数下降推断为指派" + ("" if at_expiry else "(提前指派)"),
@@ -280,7 +296,8 @@ def diff_positions(
         ))
 
     # ---- 剩余消失:到期判定 / 买回推断
-    inferred_closes: dict[str, TradeEvent] = {}   # ticker → 事件(供手动 roll 配对)
+    # (账户,标的) → 事件(供手动 roll 配对)
+    inferred_closes: dict[tuple[str, str], TradeEvent] = {}
     for k, n in pending_close.items():
         if n <= 0:
             continue
@@ -302,7 +319,7 @@ def diff_positions(
                 exec_id=f"synthetic:EXPIRE:{k}",
                 ts=_expiry_eod_iso(k.expiry),
                 ticker=k.ticker, action=EXPIRE, strike=k.strike, expiry=k.expiry,
-                contracts=n, price=0.0,
+                contracts=n, price=0.0, account=k.account,
                 source="inferred", price_quality="exact",   # 到期现金流恒 0
                 outcome=outcome, note=note, needs_confirm=confirm,
             ))
@@ -312,17 +329,17 @@ def diff_positions(
                 exec_id=f"synthetic:BTC:{k}:{today.isoformat()}",
                 ts=now_iso,
                 ticker=k.ticker, action=BUY_TO_CLOSE, strike=k.strike, expiry=k.expiry,
-                contracts=n, price=round(prev_call.mid, 4),
+                contracts=n, price=round(prev_call.mid, 4), account=k.account,
                 source="inferred", price_quality="inferred",
                 outcome=OUT_BOUGHT_BACK,
                 note="仓位消失且当日无成交记录,买回价取最后已知 mid",
                 needs_confirm=True,
             )
             res.events.append(ev)
-            inferred_closes.setdefault(k.ticker, ev)
+            inferred_closes.setdefault((k.account, k.ticker), ev)
 
     # ---- 出现:开仓推断(premium 取 IBKR averageCost,净佣金,较准)
-    inferred_opens: dict[str, TradeEvent] = {}
+    inferred_opens: dict[tuple[str, str], TradeEvent] = {}
     for k, n in pending_open.items():
         c = curr_calls[k]
         blended = k in prev_calls   # 已有同合约仓位,averageCost 是混合均价
@@ -330,18 +347,18 @@ def diff_positions(
             exec_id=f"synthetic:STO:{k}:{today.isoformat()}",
             ts=now_iso,
             ticker=k.ticker, action=SELL_TO_OPEN, strike=k.strike, expiry=k.expiry,
-            contracts=n, price=round(c.open_premium, 4),
+            contracts=n, price=round(c.open_premium, 4), account=k.account,
             source="inferred", price_quality="inferred",
             note=("同合约加仓,averageCost 为混合均价,建议 CONFIRM 修正" if blended
                   else "premium 取自 IBKR averageCost(净佣金)"),
             needs_confirm=blended,
         )
         res.events.append(ev)
-        inferred_opens.setdefault(k.ticker, ev)
+        inferred_opens.setdefault((k.account, k.ticker), ev)
 
-    # ---- 手动 roll 配对:同周期同 ticker 一平一开
-    for ticker, close_ev in inferred_closes.items():
-        open_ev = inferred_opens.get(ticker)
+    # ---- 手动 roll 配对:同周期、同账户、同 ticker 一平一开
+    for bucket, close_ev in inferred_closes.items():
+        open_ev = inferred_opens.get(bucket)
         if open_ev is None:
             continue
         matched = next((pid for pid, old, new in approved_rolls
@@ -382,7 +399,7 @@ def backfill_events(positions: list[Position], now_iso: str) -> list[TradeEvent]
         exec_id=f"synthetic:backfill:{k}",
         ts=now_iso,
         ticker=k.ticker, action=SELL_TO_OPEN, strike=k.strike, expiry=k.expiry,
-        contracts=c.contracts, price=round(c.open_premium, 4),
+        contracts=c.contracts, price=round(c.open_premium, 4), account=k.account,
         source="backfill", price_quality="backfill",
         note="账本初始化补录,premium 取 IBKR averageCost,真实开仓日期不可考",
     ) for k, c in calls.items()]

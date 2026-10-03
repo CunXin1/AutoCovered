@@ -231,9 +231,12 @@ class Metrics:
 class Position:
     """一个 covered call 单元(正股 + 可选的一条 short call 腿)。
 
-    account:空 = 主账户(IBKR,账本/提案的唯一作用域);非空 = 次级只读账户
-    (如 "schwab" 经 SnapTrade)—— 只参与监控/告警,watcher 按此字段把它们
-    挡在账本 diff 和 roll 提案之外。
+    account:持仓所在账户的标识 —— IBKR 为账户号(U…),次级只读源为券商标签
+    (如 "schwab")。position_id 带 @account 后缀,保证同一标的跨账户不撞 key。
+    external:True = 外部只读账户(成交不经本系统、主源 executions 里也没有),
+    watcher 据此把它挡在账本 diff 与 roll/开仓提案之外。
+    ⚠️ account 非空不再等于"外部" —— 主券商的多个账户都有账户号且都在作用域内,
+    作用域判断必须看 external,不要看 account 是否为空。
     """
 
     ticker: str
@@ -242,11 +245,12 @@ class Position:
     events: EventDates = field(default_factory=EventDates)
     metrics: Metrics = field(default_factory=Metrics)
     account: str = ""
+    external: bool = False
 
     @property
     def position_id(self) -> str:
         """状态跟踪用的稳定 key;同一标的多条 call 腿各算一个持仓,
-        次级账户带 @account 后缀,与主账户同标的不撞 key。"""
+        带 @account 后缀,保证同标的跨账户不撞 key。"""
         if not self.call:
             base = self.ticker
         else:
@@ -258,6 +262,7 @@ class Position:
             "id": self.position_id,
             "ticker": self.ticker,
             "account": self.account,
+            "external": self.external,
             "stock": self.stock.to_dict(),
             "call": self.call.to_dict() if self.call else None,
             "events": self.events.to_dict(),
@@ -273,6 +278,8 @@ class Position:
             events=EventDates.from_dict(d.get("events")),
             metrics=Metrics.from_dict(d.get("metrics")),
             account=d.get("account", "") or "",
+            # 旧快照没有 external 字段:当时 account 非空就等于次级只读账户
+            external=bool(d.get("external", bool(d.get("account")))),
         )
 
 

@@ -77,6 +77,7 @@ class Proposal:
     expires_at: datetime
     status: str = PENDING
     result: str = ""
+    account: str = ""    # 下单账户(多账户必填;下错账户 = 裸卖)
 
     @classmethod
     def new(
@@ -88,6 +89,7 @@ class Proposal:
         limit_net_credit: float,
         rationale: str,
         ttl_minutes: int = 30,
+        account: str = "",
     ) -> "Proposal":
         now = datetime.now(timezone.utc)
         return cls(
@@ -100,6 +102,7 @@ class Proposal:
             rationale=rationale,
             created_at=now,
             expires_at=now + timedelta(minutes=ttl_minutes),
+            account=account,
         )
 
     def is_expired(self, now: Optional[datetime] = None) -> bool:
@@ -108,7 +111,9 @@ class Proposal:
 
     def summary(self) -> str:
         legs = " + ".join(l.summary() for l in self.legs)
-        return f"[{self.id}] {self.ticker} {self.kind}: {legs},限价 net credit ${self.limit_net_credit:.2f}"
+        acct = f" @{self.account}" if self.account else ""
+        return (f"[{self.id}] {self.ticker}{acct} {self.kind}: {legs},"
+                f"限价 net credit ${self.limit_net_credit:.2f}")
 
     def to_dict(self) -> dict:
         return {
@@ -123,6 +128,7 @@ class Proposal:
             "expires_at": self.expires_at.isoformat(),
             "status": self.status,
             "result": self.result,
+            "account": self.account,
         }
 
     @classmethod
@@ -138,6 +144,7 @@ class Proposal:
             created_at=datetime.fromisoformat(d["created_at"]),
             expires_at=datetime.fromisoformat(d["expires_at"]),
             status=d.get("status", PENDING),
+            account=d.get("account", "") or "",
             result=d.get("result", ""),
         )
 
@@ -191,15 +198,20 @@ class ProposalStore:
         return [Proposal.from_dict(d) for d in self._load_all().values()
                 if d.get("status") == status]
 
-    def pending_open_contracts(self, ticker: str) -> int:
+    def pending_open_contracts(self, ticker: str, account: Optional[str] = None) -> int:
         """该 ticker 未过期 pending OPEN_CALL 提案的总张数(覆盖率校验:
-        两条各自合规的提案不许联合超卖)。"""
+        两条各自合规的提案不许联合超卖)。
+
+        account 非 None 时只统计该账户 —— 覆盖是按账户算的,别的账户的
+        pending 提案不占用本账户的股数预算。
+        """
         now = datetime.now(timezone.utc)
         n = 0
         for d in self._load_all().values():
             if (d.get("ticker", "").upper() == ticker.upper()
                     and d.get("kind") == "OPEN_CALL"
                     and d.get("status") == PENDING
+                    and (account is None or (d.get("account", "") or "") == account)
                     and datetime.fromisoformat(d["expires_at"]) > now):
                 n += sum(l.get("contracts", 0) for l in d.get("legs", []))
         return n

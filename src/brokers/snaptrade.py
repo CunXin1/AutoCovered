@@ -125,11 +125,13 @@ def build_account_positions(
         if stock.qty < 100 and not sym_calls:
             continue
         if not sym_calls:
-            positions.append(Position(ticker=ticker, stock=stock, account=account_tag))
+            positions.append(Position(ticker=ticker, stock=stock,
+                                      account=account_tag, external=True))
         else:
             for call in sym_calls:
                 positions.append(Position(
-                    ticker=ticker, stock=stock, call=call, account=account_tag))
+                    ticker=ticker, stock=stock, call=call,
+                    account=account_tag, external=True))
     for ticker in calls:
         log.warning("SnapTrade %s 有空头 call 但无对应正股,跳过(非 covered)", ticker)
     return positions

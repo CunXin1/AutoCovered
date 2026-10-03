@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS trades (
   exec_id       TEXT UNIQUE NOT NULL,
   ts            TEXT NOT NULL,
   ticker        TEXT NOT NULL,
+  account       TEXT NOT NULL DEFAULT '',  -- 主券商多账户:轮次按账户隔离
   action        TEXT NOT NULL,            -- SELL_TO_OPEN|BUY_TO_CLOSE|EXPIRE|ASSIGN
   strike        REAL NOT NULL,
   expiry        TEXT NOT NULL,            -- YYYY-MM-DD
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE TABLE IF NOT EXISTS rounds (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker               TEXT NOT NULL,
+  account              TEXT NOT NULL DEFAULT '',
   strike               REAL NOT NULL,
   expiry               TEXT NOT NULL,
   opened_ts            TEXT NOT NULL,
@@ -60,9 +62,13 @@ CREATE TABLE IF NOT EXISTS rounds (
   outcome              TEXT NOT NULL DEFAULT 'open',
   rolled_from_round_id INTEGER
 );
+"""
+
+# 索引单列一段:必须在 _migrate() 补完列之后再建(idx_rounds_key 引用 account)
+_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_trades_round ON trades(round_id);
 CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
-CREATE INDEX IF NOT EXISTS idx_rounds_key ON rounds(ticker, strike, expiry);
+CREATE INDEX IF NOT EXISTS idx_rounds_key ON rounds(ticker, account, strike, expiry);
 """
 
 
@@ -89,7 +95,19 @@ class Ledger:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
+        self.conn.executescript(_INDEXES)
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """账本启用后新增的列:老库补列,保持可重复执行(幂等)。"""
+        for table in ("trades", "rounds"):
+            cols = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})")}
+            if "account" not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN account TEXT NOT NULL DEFAULT ''")
+                log.info("账本迁移:%s 表补 account 列", table)
 
     def close(self) -> None:
         self.conn.close()
@@ -122,17 +140,20 @@ class Ledger:
             "FROM trades WHERE round_id=?", (SELL_TO_OPEN, round_id)).fetchone()
         return int(row[0])
 
-    def _open_round(self, ticker: str, strike: float, expiry: str) -> Optional[int]:
+    def _open_round(self, ticker: str, strike: float, expiry: str,
+                    account: str = "") -> Optional[int]:
         row = self.conn.execute(
-            "SELECT id FROM rounds WHERE ticker=? AND strike=? AND expiry=? "
-            "AND outcome=? ORDER BY id DESC LIMIT 1",
-            (ticker, strike, expiry, OUT_OPEN)).fetchone()
+            "SELECT id FROM rounds WHERE ticker=? AND account=? AND strike=? "
+            "AND expiry=? AND outcome=? ORDER BY id DESC LIMIT 1",
+            (ticker, account, strike, expiry, OUT_OPEN)).fetchone()
         return row["id"] if row else None
 
-    def _latest_round(self, ticker: str, strike: float, expiry: str) -> Optional[int]:
+    def _latest_round(self, ticker: str, strike: float, expiry: str,
+                      account: str = "") -> Optional[int]:
         row = self.conn.execute(
-            "SELECT id FROM rounds WHERE ticker=? AND strike=? AND expiry=? "
-            "ORDER BY id DESC LIMIT 1", (ticker, strike, expiry)).fetchone()
+            "SELECT id FROM rounds WHERE ticker=? AND account=? AND strike=? "
+            "AND expiry=? ORDER BY id DESC LIMIT 1",
+            (ticker, account, strike, expiry)).fetchone()
         return row["id"] if row else None
 
     # ------------------------------------------------------------ 写入
@@ -144,10 +165,10 @@ class Ledger:
             for ev in sorted(events, key=_close_first):
                 cur = self.conn.execute(
                     "INSERT OR IGNORE INTO trades "
-                    "(exec_id, ts, ticker, action, strike, expiry, contracts, price, "
-                    " fees, source, price_quality, proposal_id, aux_price, note) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (ev.exec_id, ev.ts, ev.ticker, ev.action, ev.strike,
+                    "(exec_id, ts, ticker, account, action, strike, expiry, contracts, "
+                    " price, fees, source, price_quality, proposal_id, aux_price, note) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (ev.exec_id, ev.ts, ev.ticker, ev.account, ev.action, ev.strike,
                      ev.expiry.isoformat(), ev.contracts, round(ev.price, 4),
                      round(ev.fees, 4), ev.source, ev.price_quality,
                      ev.proposal_id, ev.aux_price, ev.note))
@@ -161,27 +182,28 @@ class Ledger:
     def _attach_round(self, trade_id: int, ev: TradeEvent) -> int:
         expiry = ev.expiry.isoformat()
         if ev.action == SELL_TO_OPEN:
-            rid = self._open_round(ev.ticker, ev.strike, expiry)
+            rid = self._open_round(ev.ticker, ev.strike, expiry, ev.account)
             if rid is None:
                 rid = self.conn.execute(
-                    "INSERT INTO rounds (ticker, strike, expiry, opened_ts) "
-                    "VALUES (?,?,?,?)",
-                    (ev.ticker, ev.strike, expiry, ev.ts)).lastrowid
+                    "INSERT INTO rounds (ticker, account, strike, expiry, opened_ts) "
+                    "VALUES (?,?,?,?,?)",
+                    (ev.ticker, ev.account, ev.strike, expiry, ev.ts)).lastrowid
             if ev.rolled_from is not None:
                 src = self._latest_round(ev.rolled_from.ticker, ev.rolled_from.strike,
-                                         ev.rolled_from.expiry.isoformat())
+                                         ev.rolled_from.expiry.isoformat(),
+                                         ev.rolled_from.account)
                 if src is not None and src != rid:
                     self.conn.execute(
                         "UPDATE rounds SET rolled_from_round_id=? "
                         "WHERE id=? AND rolled_from_round_id IS NULL", (src, rid))
         else:   # BUY_TO_CLOSE / EXPIRE / ASSIGN
-            rid = self._open_round(ev.ticker, ev.strike, expiry)
+            rid = self._open_round(ev.ticker, ev.strike, expiry, ev.account)
             if rid is None:
                 # 无对应开仓记录(账本启用前的历史腿):建即关的孤儿 round
                 rid = self.conn.execute(
-                    "INSERT INTO rounds (ticker, strike, expiry, opened_ts) "
-                    "VALUES (?,?,?,?)",
-                    (ev.ticker, ev.strike, expiry, ev.ts)).lastrowid
+                    "INSERT INTO rounds (ticker, account, strike, expiry, opened_ts) "
+                    "VALUES (?,?,?,?,?)",
+                    (ev.ticker, ev.account, ev.strike, expiry, ev.ts)).lastrowid
                 log.warning("平仓事件无对应开仓 round,建孤儿 round #%s(%s)", rid, ev.exec_id)
         self.conn.execute("UPDATE trades SET round_id=? WHERE id=?", (rid, trade_id))
 

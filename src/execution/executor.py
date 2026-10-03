@@ -77,6 +77,7 @@ class Executor:
             limit_net_credit=limit,
             rationale=candidate.summary(),
             ttl_minutes=self.ttl_minutes,
+            account=pos.account,
         )
         self.store.save(p)
         mode = "❗真实下单" if (self.enabled and not self.dry_run) else (
@@ -193,6 +194,7 @@ class Executor:
                     contracts=sell.contracts,
                     limit_price=p.limit_net_credit,
                     order_ref=p.id,
+                    account=p.account,
                 )
             elif p.kind == "ROLL":
                 buy = next(l for l in p.legs if l.action == "BUY")
@@ -205,6 +207,7 @@ class Executor:
                     contracts=buy.contracts,
                     limit_credit=p.limit_net_credit,
                     order_ref=p.id,
+                    account=p.account,
                 )
             else:
                 raise ValueError(f"未知提案类型: {p.kind}")

@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +64,23 @@ def load_config(path: Path | None = None) -> dict:
     return cfg
 
 
+def env_value(key: str) -> str:
+    """环境变量优先,其次 .env(与 SnapTrade 凭证同一套约定)。缺失返回空串。"""
+    import os
+
+    v = os.environ.get(key)
+    if v:
+        return v
+    return _read_env_file(REPO_ROOT / ".env").get(key, "")
+
+
 def load_lots(path: Path | None = None) -> dict[str, date]:
-    """config/lots.yaml:每只股票的建仓日期(broker API 不返回,税务倒计时需要)。"""
+    """config/lots.yaml:建仓日期(broker API 不返回,长期资本利得倒计时需要)。
+
+    键支持两种粒度:TICKER(全账户通用)与 TICKER@ACCOUNT(按账户区分)。
+    同一标的在不同账户的建仓日可能差几个月(实测 NVDA 两个账户相差 4 个月),
+    所以按账户的键优先 —— 取值走 lot_date()。
+    """
     import yaml
 
     p = path or (CONFIG_DIR / "lots.yaml")
@@ -74,11 +90,23 @@ def load_lots(path: Path | None = None) -> dict[str, date]:
         raw = yaml.safe_load(f) or {}
     out: dict[str, date] = {}
     for ticker, d in raw.items():
+        key = str(ticker).upper()
         if isinstance(d, date):
-            out[str(ticker).upper()] = d
+            out[key] = d
         elif d:
-            out[str(ticker).upper()] = date.fromisoformat(str(d))
+            out[key] = date.fromisoformat(str(d))
     return out
+
+
+def lot_date(lots: dict[str, date], ticker: str,
+             account: str = "") -> Optional[date]:
+    """TICKER@ACCOUNT 优先,退回全账户的 TICKER 键。"""
+    t = ticker.upper()
+    if account:
+        hit = lots.get(f"{t}@{account.upper()}")
+        if hit:
+            return hit
+    return lots.get(t)
 
 
 def ticker_qcc(cfg: dict, ticker: str, style: str | None = None):

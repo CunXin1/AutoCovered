@@ -300,8 +300,8 @@ class Watcher:
     def _maybe_propose_roll(self, pos, today) -> None:
         if pos.call is None or not self.executor.propose_rolls:
             return
-        if pos.account:
-            # 次级账户(Schwab)持仓:提案会下到主账户(IBKR)变裸卖,绝不提案;
+        if pos.external:
+            # 外部只读账户持仓:本系统下不了那家券商的单,绝不提案;
             # 告警/Claude 分析照常,执行由用户在对应券商手动完成
             return
         if self.executor.store.has_pending_for(pos.position_id):
@@ -333,9 +333,9 @@ class Watcher:
         if not self.ledger_writes:
             return
         try:
-            # 账本作用域只有主账户:次级账户(Schwab 等)的持仓不入账本、
-            # 不参与 diff 推断(它们的成交发生在别家券商,主源 executions 里也没有)
-            positions = [p for p in positions if not p.account]
+            # 账本作用域 = 主券商的全部账户(多账户都在内);外部只读账户的持仓
+            # 不入账本、不参与 diff 推断(成交发生在别家券商,主源 executions 里没有)
+            positions = [p for p in positions if not p.external]
 
             now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -377,9 +377,9 @@ class Watcher:
 
             exec_events = events_from_executions(executions, kinds, roll_old)
 
-            prev_positions = [Position.from_dict(d)
-                              for d in prev_raw.get("positions", [])
-                              if not d.get("account")]
+            prev_positions = [p for p in (Position.from_dict(d)
+                                          for d in prev_raw.get("positions", []))
+                              if not p.external]
             prev_source = prev_raw.get("data_source", "")
 
             # 预取"消失且已到期"腿的官方收盘价(expired/assigned 判定)
