@@ -39,21 +39,43 @@ SKIP = don't sell this round).
   disagree), product launches / investor days / guidance updates; for high-beta
   names also FOMC/CPI dates.
 - **Source**: positions.json events field + WebSearch cross-check.
-- **Rule** (disclosure; relaxed from a hard filter on 2026-07-14):
-  earnings-crossing expiries are **allowed**; the engine only stamps the ⚠️
-  column in the candidate table, and pricing the risk is this dimension's
-  disclosure duty —
-  (a) look up the earnings implied move (WebSearch "TICKER earnings implied
-  move", or gauge it from the pre/post-earnings IV gap) and compare it with the
-  strike's OTM distance: expected move near or above the distance → ↑strike or
-  pick a pre-earnings expiry; (b) an earnings-crossing candidate's premium
-  contains event premium — compare against a same-delta pre-earnings expiry;
-  the extra you collect is the fee for carrying gap risk, and the conclusion
-  must say whether that price is worth it; (c) an earnings gap can eat 20% of
-  the distance overnight; low delta ≠ zero probability — the called-away
-  scenario must appear in the conclusion. At equal annualized yield, **prefer
-  the pre-earnings expiry**. Earnings date not officially announced (sources
-  conflict) → treat the whole window as mined, lean SKIP.
+- **Rule** (revised 2026-10-02: **earnings season is not something to skip —
+  raise the strike by the name's own historical earnings move instead**).
+  Earnings-crossing expiries are allowed and the engine only stamps the ⚠️
+  column; avoiding earnings is no longer a default preference either — in a
+  dense window like late October, any compliant new leg (DTE > 31) necessarily
+  crosses an earnings date, so it cannot be dodged, only priced. Order of work:
+
+  1. **Get the historical facts first** (mandatory — never eyeball "how much
+     higher is appropriate"):
+     `python -m src.data.earnings_moves TICKER --strike K1 --strike K2 [--price P]`
+     reports what each of the last N earnings reactions actually did (close-to-
+     close and intraday-high against the prior close), the upside percentiles,
+     and the **historical breach rate for each candidate strike** — how many of
+     those N earnings would have pushed through it.
+  2. **Strike floor**: the strike's distance from spot must be ≥ the **p85 of
+     historical intraday upside moves**. Intraday rather than close is the
+     conservative choice: a strike touched intraday was ITM at that moment.
+  3. **Re-check the breach rate**: an earnings-crossing opening needs
+     **≤1 historical breach and ≤15% of the sample** on the intraday basis.
+     Above that, ↑strike until it clears, cut contracts, or SKIP.
+  4. **Thin sample** (fewer than 4 usable earnings, e.g. a recent listing) →
+     the distribution is not dependable: fall back to the implied move
+     (WebSearch "TICKER earnings implied move") and require a strike distance
+     ≥ 2× the implied move, otherwise SKIP.
+  5. **Earnings date not officially announced** (sources conflict) → treat the
+     whole window as mined, lean SKIP.
+
+  Disclosure duties that still hold: (a) an earnings-crossing candidate's
+  premium contains event premium — compare it against a same-delta pre-earnings
+  expiry; the extra you collect is the fee for carrying gap risk, and the
+  conclusion must say whether that price is worth it (the two are now compared
+  **on equal footing**, with no built-in preference for the pre-earnings
+  expiry); (b) a historical distribution is not a probability guarantee — the
+  sample is a handful of events and IV has already priced the market's expected
+  move into the premium, so zero historical breaches ≠ it will not break this
+  time; (c) the called-away scenario must appear in the conclusion, because low
+  delta ≠ zero probability.
 
 ## 3. Ex-dividend date (the hidden door to early assignment)
 
@@ -194,8 +216,10 @@ A roll's new leg is also contract selection, but not all 9 dimensions run:
 ## Interfaces with the rest of the system
 
 - All price/delta/annualized numbers come only from the candidate table;
-  WebSearch provides **events and verifiable public facts** (earnings dates,
-  ex-div dates, 52-week highs, price targets), never price computation.
+  historical earnings moves and breach rates come only from
+  `python -m src.data.earnings_moves`; WebSearch provides **events and
+  verifiable public facts** (earnings dates, ex-div dates, 52-week highs,
+  price targets, implied move), never price computation.
 - Research conclusions must land inside the candidate set; wanting an outside
   contract = go change --style or config, not bypass the guardrail.
 - Archive the full decision table to

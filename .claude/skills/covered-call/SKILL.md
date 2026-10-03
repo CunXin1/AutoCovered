@@ -36,12 +36,16 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 - 开仓目标 delta 见 config/settings.yaml 的 qcc 段(默认 0.20–0.30);
   高波动股(NVDA/TSLA 等)看 tickers 段的 per-ticker 覆盖(更低 delta + 部分覆盖)
 - roll 只做 net credit,除非 strike 改善显著(以 roll 段配置为准)
-- 到期日跨财报**允许**(2026-07-14 起由"收紧例外"改为风险披露,同成本线
-  规则的放宽思路):引擎不再拦截,只给候选打 ⚠️跨财报 标记。任何跨财报建议
-  必须显式定价财报风险——财报前 IV 抬升是事件溢价,收的钱里有一部分是替
-  gap 风险买单;要对比预期波动(隐含 move / IV 水位)与 strike 的 OTM 距离,
-  写明"gap 一夜吃掉距离"的情景,分析和推送时显式提示。引擎和 propose 护栏
-  不挡跨财报,这笔账是你必须自行把守的披露义务
+- 到期日跨财报**允许,且财报季不必跳过**(2026-10-02 修订:由"风险披露+偏向
+  财报前到期"改为"按该标的历史财报涨幅上提 strike")。引擎不拦截,只打
+  ⚠️跨财报 标记。跨财报建议的硬要求:
+  (a) 先跑 `python -m src.data.earnings_moves TICKER --strike K` 拿**历史财报
+  反应分布**与**候选 strike 的历史击穿率**——"适当上提多少"必须来自这个工具,
+  不许自己估;(b) strike 距现价 ≥ 历史盘中上行涨幅 p85,且盘中口径历史击穿
+  ≤1 次(且 ≤15% 样本);不达标就 ↑strike / 减张 / SKIP;(c) 有效财报样本 < 4 次
+  → 退回隐含 move,要求距离 ≥ 2× 隐含 move,否则 SKIP;(d) 仍要写明:历史零
+  击穿 ≠ 这次不破(IV 已把预期波动定价进权利金),被叫走情景必须落在结论里。
+  引擎和 propose 护栏都不挡跨财报,这笔账是你必须自行把守的披露义务
   (展开见 references/strike-research.md 维度 2)
 - 管理纪律:50–75% 最大利润止盈,或 21 DTE 收尾,先到者为准
 - 持仓未满 1 年的股票,报告中必须标注"距长期资本利得剩 X 天"(metrics.days_to_long_term)
@@ -56,11 +60,16 @@ description: 分析 covered call 持仓状态、roll 决策、开仓建议。当
 2. `state/alerts.jsonl` — 当日告警流水;`state/proposals.json` — 待批/已处理的交易提案
 3. `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER
    [--mode open] [--style conservative|aggressive]`
-   — roll/开仓候选(net credit、年化由脚本确定性计算;需要 IB Gateway 在线)
-4. `python -m src.stats [--ticker X] [--json]` — 历史收益统计(round 级 + roll 链级、
-   数据质量分层)。**这是账本 state/ledger.db 的唯一读取方式,禁止直接 SQL**
-5. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期),不用于获取价格
-6. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
+   — roll/开仓候选(net credit、年化由脚本确定性计算;需要 IB Gateway 在线)。
+   盘后会自动改用 RTH 收盘前窗口报价重算(盘后 frozen 快照的点差是收盘残留)
+4. `python -m src.data.earnings_moves TICKER [--strike K] [--lookback N]`
+   — 历史财报反应涨幅 + 候选 strike 的历史击穿率。**跨财报定价的唯一数字来源**
+5. `python -m src.stats [--ticker X] [--json] [--all]` — 历史收益统计(round 级 +
+   roll 链级、数据质量分层;默认只算 stats.since 之后开仓的轮次)。
+   **这是账本 state/ledger.db 的唯一读取方式,禁止直接 SQL**
+6. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期、隐含 move),
+   不用于获取价格
+7. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
 
 ### 数据新鲜度
 

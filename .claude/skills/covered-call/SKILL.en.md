@@ -48,16 +48,23 @@ this file, this file wins.
   the tickers section (lower delta + partial coverage)
 - Rolls must be net credit, unless the strike improvement is significant
   (per the roll section of config)
-- Expiries crossing earnings are **allowed** (relaxed from the tightened
-  exception to risk-priced disclosure on 2026-07-14, same philosophy as the
-  cost-basis rule): the engine no longer filters them, it only stamps the
-  ⚠️ earnings marker. Any earnings-crossing recommendation must price the
-  event explicitly — pre-earnings IV elevation is event premium, part of what
-  you collect is payment for gap risk; compare the expected move (implied
-  move / IV level) against the strike's OTM distance, spell out the
-  "gap eats the distance overnight" scenario, and flag it in analyses and
-  pushes. Neither the engine nor the propose guardrail blocks the crossing —
-  this disclosure duty is yours alone
+- Expiries crossing earnings are **allowed, and earnings season is not to be
+  skipped** (revised 2026-10-02 from "risk-priced disclosure with a preference
+  for pre-earnings expiries" to "raise the strike by the name's own historical
+  earnings move"). The engine does not filter them, it only stamps the
+  ⚠️ earnings marker. Hard requirements for an earnings-crossing recommendation:
+  (a) first run `python -m src.data.earnings_moves TICKER --strike K` for the
+  **historical earnings-reaction distribution** and the **historical breach
+  rate per candidate strike** — "how much higher is appropriate" must come from
+  that tool, never from your own estimate; (b) the strike's distance from spot
+  must be ≥ the p85 of historical intraday upside moves, with ≤1 historical
+  breach and ≤15% of the sample on the intraday basis; otherwise ↑strike, cut
+  contracts, or SKIP; (c) fewer than 4 usable earnings samples → fall back to
+  the implied move and require a distance ≥ 2× it, else SKIP; (d) still state
+  plainly that zero historical breaches ≠ it will not break this time (IV has
+  already priced the expected move into the premium), and the called-away
+  scenario must appear in the conclusion. Neither the engine nor the propose
+  guardrail blocks the crossing — this disclosure duty is yours alone
   (details: references/strike-research.en.md, dimension 2)
 - Management discipline: take profit at 50–75% of max profit, or wrap up at
   21 DTE, whichever comes first
@@ -78,13 +85,19 @@ this file, this file wins.
 3. `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER
    [--mode open] [--style conservative|aggressive]`
    — roll/opening candidates (net credit and annualized yield computed
-   deterministically by the script; requires IB Gateway online)
-4. `python -m src.stats [--ticker X] [--json]` — historical P&L (round-level +
-   roll-chain level, with data-quality tiers). **The only permitted reader of
+   deterministically by the script; requires IB Gateway online). After hours it
+   automatically re-quotes from the RTH pre-close window, because a frozen
+   post-close snapshot's spread is leftover book state
+4. `python -m src.data.earnings_moves TICKER [--strike K] [--lookback N]`
+   — historical earnings-reaction moves and the per-strike historical breach
+   rate. **The sole source of numbers for pricing an earnings crossing**
+5. `python -m src.stats [--ticker X] [--json] [--all]` — historical P&L
+   (round-level + roll-chain level, with data-quality tiers; by default only
+   rounds opened after stats.since). **The only permitted reader of
    state/ledger.db; direct SQL is forbidden**
-5. WebSearch — only for news and event context (explaining price moves,
-   verifying earnings dates), never for prices
-6. Background: `covered call strategy.md` (strategy rationale),
+6. WebSearch — only for news and event context (explaining price moves,
+   verifying earnings dates, implied move), never for prices
+7. Background: `covered call strategy.md` (strategy rationale),
    `config/settings.yaml` (current thresholds)
 
 ### Data freshness

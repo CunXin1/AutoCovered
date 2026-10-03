@@ -36,7 +36,10 @@ Covered call 监控 + 半自动执行系统。架构:Python watcher 管数字,Cl
 - `python -m src.run_task daily|weekly [--force]` — 晨报/周报
 - `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER [--mode open] [--style conservative|aggressive]`
 - `python -m src.execution.propose TICKER --strike K --expiry D --contracts N [--style S]` — 开仓提案(推手机批准)
-- `python -m src.stats [--ticker X]` — 历史收益统计(账本唯一读取口)
+- `python -m src.data.earnings_moves TICKER [--strike K]` — 历史财报涨幅 +
+  候选 strike 的历史击穿率(跨财报定价的唯一数字来源)
+- `python -m src.stats [--ticker X] [--all]` — 历史收益统计(账本唯一读取口;
+  默认只算 settings.yaml 的 stats.since 之后开仓的轮次)
 - `python -m src.reconcile --flex [--apply]` — 从 IBKR Flex 报表补录历史成交
   (缺省只打印计划;账本单写者纪律:--apply 前先停 daemon watcher)
 
