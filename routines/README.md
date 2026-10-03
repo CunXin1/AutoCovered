@@ -8,7 +8,7 @@
 | 指令文件 | 建议调度 | 干什么 |
 |---|---|---|
 | `daily-briefing.md` | 交易日 06:15 | 晨报:持仓总览+开仓建议+新闻+事件日历 |
-| `breach-roll-check.md` | 盘中每 2 小时 | **击穿防线/差价/该不该 roll 巡检**(执行 breach-watch skill),有风险才推送 |
+| `breach-roll-check.md` | 盘中每 2 小时 | **击穿防线/差价/该不该 roll 巡检**(执行 scheduled-tasks skill 第二节),有风险才推送 |
 | `weekly-review.md` | 周日 18:00 | 周报:roll 计划+收益核算+QCC 审计 |
 
 ## 怎么注册(三选一)

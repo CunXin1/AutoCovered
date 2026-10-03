@@ -1,15 +1,8 @@
-# 每日晨报(Claude Code 定时任务指令)
+# 每日晨报(Claude Code 定时任务入口)
 
 **调度建议:每个交易日本地 06:15(太平洋时间,= 美东 09:15 开盘前)。**
-周末/节假日如被误触发:先判断今天是否美股交易日(state/positions.json 的
-updated_at 或 WebSearch 确认),非交易日直接结束,不推送。
 
-## 步骤
+执行 **scheduled-tasks skill** 的「一、每日晨报」一节
+(`.claude/skills/scheduled-tasks/SKILL.md`),按**定时(headless)模式**运行。
 
-1. **刷新事实**:运行 `python -m src.watcher --once --no-trigger`
-   (失败 = IB Gateway 离线,继续用现有 state,在简报开头声明数据时间)
-2. **执行晨报**:按 `prompts/daily.md` 的完整要求执行
-   (持仓总览 → UNCOVERED 开仓候选 → 隔夜新闻 → 财报/除息日历 → 待批提案提醒)
-3. **存档**:Write 全文到 `state/analysis/YYYY-MM-DD-daily.md`
-4. **推送**:
-   `python .claude/skills/covered-call/scripts/notify.py --title "📊 晨报:<第一行总结>" --body-file state/analysis/YYYY-MM-DD-daily.md --severity 2`
+流程细节、门禁、存档路径与推送参数都以那一节为准 —— 本文不重复,避免两处漂移。

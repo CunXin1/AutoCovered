@@ -109,17 +109,27 @@ There is no fully automatic mode, and none will be added.
 
 ## Using it inside Claude Code
 
-This repo ships a `covered-call` skill. Open Claude Code in the repo directory
-and just say: "check my positions" / "run a morning briefing" / "should I roll
-that NVDA call now" / "open a call on MSFT, keep it conservative" / "how much
-have I made selling CCs per ticker".
+This repo ships two skills with a deliberate split:
 
-**Claude Code scheduled tasks:** the `routines/` directory holds three
-Claude-facing task instructions — morning briefing (trading day 6:15), intraday
-breach/roll patrol (every 2 hours, pushes only on risk), and weekly review
-(Sunday). See [`routines/README.md`](routines/README.md) to register them; the
-traditional OS-scheduler route is in [`deploy/README.md`](deploy/README.md) —
-pick one, not both.
+- **`covered-call`** — interactive analysis. Analyze the current book, decide
+  which calls to sell, and write the conclusions to
+  `state/analysis/YYYY-MM-DD-positions-report.md` automatically. Say: "check my
+  positions" / "open a call on MSFT, ultra conservative" / "how much have I made
+  selling CCs per ticker".
+- **`scheduled-tasks`** — the time-triggered jobs: morning briefing, intraday
+  breach/gap patrol (is spot nearing a strike, should it be rolled up & forward),
+  weekly review. Say: "run the patrol" / "run the briefing", or let the scheduler
+  fire it.
+
+The first never pushes to your phone (you are at the screen) and always leaves a
+report; the second stays silent when there is no risk and pushes when there is.
+Strategy rules live in one place — `covered-call`'s SKILL.md is the rulebook that
+`scheduled-tasks` and `prompts/` both declare they follow.
+
+**Registering the scheduled jobs:** `routines/` holds three thin entry points for
+the scheduler (the flows themselves live in the `scheduled-tasks` skill). See
+[`routines/README.md`](routines/README.md); the traditional OS-scheduler route is
+in [`deploy/README.md`](deploy/README.md) — pick one, not both.
 
 ## Disclaimer
 
@@ -227,14 +237,23 @@ python -m src.watcher --once                           # 单轮冒烟(需 IB Gat
 
 ## 在 Claude Code 窗口里用
 
-本仓库自带 `covered-call` skill。在仓库目录开 Claude Code 直接说:
-"看一下持仓状态" / "跑一份晨报" / "NVDA 那条 call 现在该不该 roll" /
-"给 MSFT 开仓,保守一点" / "统计一下每只股票卖 CC 赚了多少"。
+本仓库自带两个 skill,职责刻意分开:
 
-**Claude Code 定时任务**:`routines/` 目录有三份面向 Claude 的任务指令 —
-晨报(交易日 6:15)、盘中击穿/roll 巡检(每 2 小时,有风险才推送)、周报(周日)。
-注册方法见 [`routines/README.md`](routines/README.md);传统 OS 调度器路线见
-[`deploy/README.md`](deploy/README.md),二选一即可。
+- **`covered-call`** —— 交互式分析。分析当前持仓、判断该卖哪些 call,
+  并自动把结论写成 `state/analysis/YYYY-MM-DD-positions-report.md`。
+  直接说:"看一下持仓状态" / "给 MSFT 开仓,超低被叫走" /
+  "统计一下每只股票卖 CC 赚了多少"。
+- **`scheduled-tasks`** —— 按时间触发的三件事:每日晨报、盘中击穿/差价巡检
+  (现价有没有逼近 strike、要不要 roll up & forward)、周度复盘。
+  说"跑一下巡检""跑份晨报",或交给调度器到点触发。
+
+前者不推手机(人就在屏幕前)但每次留报告;后者没风险就静默、有风险才推送。
+策略规则只有一处:`covered-call` 的 SKILL.md 是规则手册,
+`scheduled-tasks` 与 `prompts/` 都声明遵守它。
+
+**注册定时任务**:`routines/` 下是三份给调度器的入口(流程本身在
+`scheduled-tasks` skill 里)。方法见 [`routines/README.md`](routines/README.md);
+传统 OS 调度器路线见 [`deploy/README.md`](deploy/README.md),二选一即可。
 
 ## 免责声明
 

@@ -3,6 +3,11 @@
 Covered call 监控 + 半自动执行系统。架构:Python watcher 管数字,Claude 管叙述,
 `state/` 目录是两层唯一接口。详见 README.md 与 `.claude/skills/covered-call/SKILL.md`。
 
+两个 skill 职责分开,别混:**covered-call** = 交互式分析(分析持仓 → 该卖哪些 call
+→ 自动写 `state/analysis/YYYY-MM-DD-positions-report.md`),它同时是全系统规则手册;
+**scheduled-tasks** = 定时任务(晨报 / 盘中击穿巡检含 roll 判定 / 周报),
+推送手机只发生在这一边。
+
 ## 账户模型(2026-10-02 起)
 
 正股分散在 IBKR 的三个账户,**全部**在 covered call 作用域内。因此:
