@@ -69,8 +69,12 @@ class BrokerClient(ABC):
         contracts: int,
         limit_price: float,
         order_ref: str = "",
+        account: str = "",
     ) -> str:
-        """卖出开仓 covered call 限价单。只有交易 provider 支持。"""
+        """卖出开仓 covered call 限价单。只有交易 provider 支持。
+
+        account:下单账户。多账户登录时必填 —— 下错账户 = 该账户无对应正股 = 裸卖。
+        """
         raise NotImplementedError(f"{self.name} 不支持下单")
 
     def place_roll(
@@ -83,6 +87,7 @@ class BrokerClient(ABC):
         contracts: int,
         limit_credit: float,
         order_ref: str = "",
+        account: str = "",
     ) -> str:
         """提交 roll 组合限价单,返回订单状态描述。只有交易 provider 支持。"""
         raise NotImplementedError(f"{self.name} 不支持下单")

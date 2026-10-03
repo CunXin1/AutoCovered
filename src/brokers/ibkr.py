@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import math
 import sys
@@ -18,6 +19,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from src.brokers.base import BrokerClient
+from src.config import lot_date
 from src.engine.roll import ChainQuote
 from src.models import Position, ShortCall, StockHolding
 
@@ -36,6 +38,33 @@ def _safe(v) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return None if math.isnan(f) else f
+
+
+# 连接类故障:socket 断开、API 不响应(有界超时触发)。ib_async 在未连接时
+# 发请求抛 ConnectionError("Not connected");僵尸连接表现为请求超时。
+_CONN_ERRORS = (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)
+
+
+def _heals_connection(fn):
+    """请求级僵尸自愈:连接类故障时拆掉连接重建,并重试一次。
+
+    僵尸态("socket 在但 API 不响应")只能由真实请求暴露 —— 探针式健康检查
+    在 ib_async 上会误报(见 _alive 的注释),所以自愈点放在这里而不是探针里。
+
+    ⚠️ 只用于只读请求。下单方法绝不加:连接故障时重试 = 可能重复下单。
+    """
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return fn(self, *args, **kwargs)
+        except _CONN_ERRORS as e:
+            log.warning("%s 连接类故障(%s: %s),重建连接后重试一次",
+                        fn.__name__, type(e).__name__, e or "(无消息)")
+            self._teardown()
+            return fn(self, *args, **kwargs)
+
+    return wrapper
 
 
 class IBKRGatewayClient(BrokerClient):
@@ -59,10 +88,10 @@ class IBKRGatewayClient(BrokerClient):
 
     # ------------------------------------------------------------ 连接
     #
-    # Gateway 每日自动重启后,ib_async 的 isConnected() 可能停留在旧状态,
-    # 或连接进入"socket 在但 API 不响应"的僵尸态。因此:
-    # 1. 复用前先做轻量健康探测(reqCurrentTime round-trip)
-    # 2. 探测失败 → 拆干净旧对象重建,绝不复用坏 IB 实例
+    # Gateway 每日自动重启后,连接可能进入"socket 在但 API 不响应"的僵尸态。
+    # 应对:
+    # 1. 复用前只做零往返的本地状态检查(_alive);不发探针请求
+    # 2. 真僵尸由只读请求的 @_heals_connection 兜底:故障 → 拆重建 → 重试一次
     # 3. 撞 client id(旧会话未释放,IB 错误 326)→ +100 轮换重试,
     #    不会落在 11-14 的保留段上
 
@@ -99,14 +128,16 @@ class IBKRGatewayClient(BrokerClient):
         raise last_err
 
     def _alive(self) -> bool:
-        """isConnected() 不可信,发一个轻量请求确认 API 真在响应。"""
-        if self.ib is None or not self.ib.isConnected():
-            return False
-        try:
-            self.ib.reqCurrentTime()
-            return True
-        except Exception:
-            return False
+        """本地状态检查,零往返。
+
+        这里曾经发 reqCurrentTime() 做"API 真在响应"的探测 —— 2026-10 实测
+        证明那是错的:健康连接上连发该请求会自相竞争 currentTime future,
+        间歇抛 TimeoutError(isConnected() 全程 True)。由于每个 broker 方法
+        都经 _ensure() → connect() → _alive(),误报会把好连接拆掉重建,重连
+        换 clientId(+100 轮换)而旧会话尚未释放 → 撞 id → 判"连接失败"。
+        2026-07-16 那次 clientId=214 的 3/3 连接失败级联就是这么来的。
+        """
+        return self.ib is not None and self.ib.isConnected()
 
     def _teardown(self) -> None:
         if self.ib is not None:
@@ -123,8 +154,25 @@ class IBKRGatewayClient(BrokerClient):
         self.connect()
         return self.ib
 
+    def _last_daily_close(self, contract) -> Optional[float]:
+        """最近一根日线收盘价。
+
+        盘后/frozen 行情下 reqTickers 的快照经常在等待窗口内只给 NaN(TWS 不报错,
+        且每轮失败的标的随机),而日线历史数据稳定秒回。收盘后"现价"取官方日线
+        收盘价本身也是正确口径,所以这是取价链的最后一级,而不是放弃。
+        """
+        try:
+            bars = self.ib.reqHistoricalData(
+                contract, endDateTime="", durationStr="5 D",
+                barSizeSetting="1 day", whatToShow="TRADES", useRTH=True)
+        except Exception as e:
+            log.warning("%s 日线兜底取价失败: %s", getattr(contract, "symbol", "?"), e)
+            return None
+        return _safe(bars[-1].close) if bars else None
+
     # ------------------------------------------------------------ 持仓
 
+    @_heals_connection
     def fetch_positions(self, lots: Optional[dict[str, date]] = None) -> list[Position]:
         ib = self._ensure()
         lots = lots or {}
@@ -143,17 +191,6 @@ class IBKRGatewayClient(BrokerClient):
             elif c.secType == "OPT" and c.right in ("C", "CALL") and p.position < 0:
                 calls[key].append(p)
 
-        # 同一标的出现在多个跟踪账户时,position_id 会撞 key(models.Position 不含账户维度),
-        # 这里显式告警,提醒用配置把跟踪范围收敛到单账户。
-        seen_syms: dict[str, str] = {}
-        for acct, sym in list(stocks.keys()) + list(calls.keys()):
-            if sym in seen_syms and seen_syms[sym] != acct:
-                log.warning(
-                    "标的 %s 同时存在于账户 %s 和 %s;当前 state key 不区分账户,"
-                    "建议用 ibkr.accounts 只跟踪其一", sym, seen_syms[sym], acct
-                )
-            seen_syms.setdefault(sym, acct)
-
         # 批量拿股票现价(positions() 不带 marketPrice)
         stock_contracts = []
         for sit in stocks.values():
@@ -163,10 +200,29 @@ class IBKRGatewayClient(BrokerClient):
             stock_contracts.append(sit.contract)
         stock_px: dict[int, float] = {}
         if stock_contracts:
-            for t in ib.reqTickers(*ib.qualifyContracts(*stock_contracts)):
+            qualified = [c for c in ib.qualifyContracts(*stock_contracts) if c]
+            for t in ib.reqTickers(*qualified):
                 px = _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
                 if px:
                     stock_px[t.contract.conId] = px
+            # 批量 reqTickers 在盘后/frozen 行情下常有几个标的拿不到快照(实测
+            # 2026-10-02 盘后 7 个标的里 4 个全 NaN,单独请求则都有)。没有现价的
+            # 持仓会被整条跳过 —— 宁可多走一趟,也不要静默少监控一个仓位。
+            for c in [c for c in qualified if c.conId not in stock_px]:
+                px = None
+                try:
+                    [t] = ib.reqTickers(c)
+                    px = _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
+                except Exception as e:
+                    log.warning("%s 单独取价失败: %s", c.symbol, e)
+                if px:
+                    stock_px[c.conId] = px
+                    log.info("%s 批量取价为空,单独快照拿到 %.2f", c.symbol, px)
+                    continue
+                px = self._last_daily_close(c)
+                if px:
+                    stock_px[c.conId] = px
+                    log.info("%s 快照无数据,取官方日线收盘价 %.2f", c.symbol, px)
 
         # 批量拿期权实时数据(delta/iv/mid)
         option_contracts = []
@@ -204,10 +260,10 @@ class IBKRGatewayClient(BrokerClient):
                 qty=float(sit.position),
                 avg_cost=float(sit.avgCost),
                 price=float(price),
-                acquired_date=lots.get(sym.upper()),
+                acquired_date=lot_date(lots, sym, acct),
             )
             if not sym_calls:
-                positions.append(Position(ticker=sym, stock=stock))
+                positions.append(Position(ticker=sym, stock=stock, account=acct))
                 continue
 
             for cit in sym_calls:
@@ -221,6 +277,7 @@ class IBKRGatewayClient(BrokerClient):
                 positions.append(Position(
                     ticker=sym,
                     stock=stock,
+                    account=acct,
                     call=ShortCall(
                         strike=float(c.strike),
                         expiry=datetime.strptime(
@@ -237,6 +294,7 @@ class IBKRGatewayClient(BrokerClient):
 
     # ------------------------------------------------------------ 期权链
 
+    @_heals_connection
     def fetch_chain(
         self, ticker: str, min_dte: int, max_dte: int
     ) -> tuple[float, list[ChainQuote]]:
@@ -297,6 +355,7 @@ class IBKRGatewayClient(BrokerClient):
 
     # ------------------------------------------------------------ 成交与历史
 
+    @_heals_connection
     def fetch_executions(self):
         """当日全账户期权成交(所有 client + TWS 手动单),含精确佣金。
 
@@ -332,9 +391,11 @@ class IBKRGatewayClient(BrokerClient):
                 price=float(ex.price),
                 fees=commission,
                 order_ref=ex.orderRef or "",
+                account=str(ex.acctNumber or ""),
             ))
         return out
 
+    @_heals_connection
     def fetch_daily_close(self, ticker: str, d: date) -> Optional[float]:
         """d 当日官方日线收盘价(到期 expired/assigned 判定用;当日无 bar 返回 None)。"""
         from ib_async import Stock
@@ -356,6 +417,7 @@ class IBKRGatewayClient(BrokerClient):
                 return _safe(bar.close)
         return None
 
+    @_heals_connection
     def quote_option(self, ticker: str, strike: float, expiry: date) -> dict:
         """单合约实时报价(批准执行前的二次校验用)。
 
@@ -380,6 +442,77 @@ class IBKRGatewayClient(BrokerClient):
             "stock_price": _safe(st.marketPrice()) or _safe(st.close),
         }
 
+    @_heals_connection
+    @_heals_connection
+    @_heals_connection
+    def daily_bars(self, ticker: str, duration: str = "3 Y") -> list[tuple]:
+        """正股日线序列 [(date, high, low, close)],一次请求覆盖多年。
+
+        逐个事件去拉短区间会撞 IBKR 历史数据限速(约 60 次/10 分钟),
+        所以一次取长序列,事件窗口在本地切。
+        """
+        from ib_async import Stock
+
+        ib = self._ensure()
+        stock = Stock(ticker, "SMART", "USD")
+        if not [c for c in ib.qualifyContracts(stock) if c]:
+            return []
+        bars = ib.reqHistoricalData(
+            stock, endDateTime="", durationStr=duration, barSizeSetting="1 day",
+            whatToShow="TRADES", useRTH=True)
+        out = []
+        for b in bars or []:
+            d = b.date if isinstance(b.date, date) else b.date.date()
+            out.append((d, _safe(b.high), _safe(b.low), _safe(b.close)))
+        return out
+
+    def quote_option_rth(self, ticker: str, strike: float, expiry: date, *,
+                         window_min: int = 60,
+                         exclude_last_min: int = 5) -> Optional[dict]:
+        """用 RTH 内收盘前一段窗口的报价给出可信 bid/ask(盘后研究的正确口径)。
+
+        盘后 16:00 ET 之后没有做市商报价,frozen 快照是收盘残留的簿子状态,
+        点差可能虚高到 90%(实测 2026-10-02 盘后 IBM/AAPL 多个合约),拿它判断
+        流动性会把本来好的合约误杀。历史 BID_ASK 分钟线则是真实交易时段的报价。
+
+        BID_ASK 线字段语义(2026-10-02 实测):
+        open = 窗口内时间加权平均 bid,close = 平均 ask,low = 最低 bid,high = 最高 ask。
+
+        取窗口中位数而不是最后一根:收盘前几分钟点差会拉宽,还混着收盘竞价噪音
+        (同一合约末根 3.35/3.45,而收盘前 60 分钟窗口中位 3.46/3.55)。
+        """
+        import statistics
+        from datetime import timedelta
+
+        from ib_async import Option
+
+        ib = self._ensure()
+        opt = Option(ticker, expiry.strftime("%Y%m%d"), strike, "C", "SMART")
+        if not [c for c in ib.qualifyContracts(opt) if c]:
+            return None
+        bars = ib.reqHistoricalData(
+            opt, endDateTime="", durationStr="1 D", barSizeSetting="5 mins",
+            whatToShow="BID_ASK", useRTH=True)
+        if not bars:
+            return None
+        last = bars[-1].date
+        lo = last - timedelta(minutes=window_min)
+        hi = last - timedelta(minutes=exclude_last_min)
+        sel = [b for b in bars if lo <= b.date <= hi] or bars[-1:]
+        bid = statistics.median(b.open for b in sel)
+        ask = statistics.median(b.close for b in sel)
+        if not (bid > 0 and ask > 0):
+            return None
+        mid = (bid + ask) / 2
+        return {
+            "bid": round(bid, 4),
+            "ask": round(ask, 4),
+            "mid": round(mid, 4),
+            "spread_pct": round((ask - bid) / mid, 4) if mid else None,
+            "bars": len(sel),
+            "window": f"{sel[0].date:%H:%M}–{sel[-1].date:%H:%M} ET {sel[0].date:%Y-%m-%d}",
+        }
+
     def quote_stock(self, ticker: str) -> Optional[float]:
         """正股实时现价(次级持仓源无腿标的的重定价)。"""
         from ib_async import Stock
@@ -388,9 +521,25 @@ class IBKRGatewayClient(BrokerClient):
         stock = Stock(ticker, "SMART", "USD")
         ib.qualifyContracts(stock)
         [t] = ib.reqTickers(stock)
-        return _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
+        px = _safe(t.marketPrice()) or _safe(t.last) or _safe(t.close)
+        return px if px else self._last_daily_close(stock)
 
     # ------------------------------------------------------------ 下单
+
+    def _require_order_account(self, account: str) -> None:
+        """多账户登录下不许省略下单账户。
+
+        TWS 在多账户会话里收到不带 account 的单会自己挑一个(或直接报错 321)。
+        挑错账户 = 那个账户没有对应正股 = 裸卖空头 call,理论无限风险。
+        """
+        if account:
+            return
+        managed = [a for a in (self.ib.managedAccounts() if self.ib else []) if a]
+        if len(managed) > 1:
+            raise RuntimeError(
+                f"多账户登录({len(managed)} 个)下必须指定下单账户:"
+                f"不指定则 TWS 自行挑选,可能下到无正股的账户变成裸卖。"
+                f"提案需带 account 字段。")
 
     def place_open_call(
         self,
@@ -400,6 +549,7 @@ class IBKRGatewayClient(BrokerClient):
         contracts: int,
         limit_price: float,
         order_ref: str = "",
+        account: str = "",
     ) -> str:
         """卖出开仓单腿 covered call:SELL 限价单,DAY 有效(禁 GTC,
         订单不许活得比提案治理长)。orderRef=提案 id,成交回报自动归因。
@@ -409,10 +559,11 @@ class IBKRGatewayClient(BrokerClient):
         from ib_async import LimitOrder, Option
 
         ib = self._ensure()
+        self._require_order_account(account)
         opt = Option(ticker, expiry.strftime("%Y%m%d"), strike, "C", "SMART")
         ib.qualifyContracts(opt)
         order = LimitOrder("SELL", contracts, round(limit_price, 2),
-                           tif="DAY", orderRef=order_ref)
+                           tif="DAY", orderRef=order_ref, account=account)
         trade = ib.placeOrder(opt, order)
         ib.sleep(3)
         status = trade.orderStatus.status
@@ -422,6 +573,7 @@ class IBKRGatewayClient(BrokerClient):
             f"{expiry:%m/%d} ${strike:g}C 限价 ${limit_price:.2f}(DAY)"
         )
 
+    @_heals_connection
     def fetch_open_order_refs(self) -> set[str]:
         """当前在途订单的 orderRef 集合(提案终态跟踪:不在途且未全成交 = 已取消)。"""
         ib = self._ensure()
@@ -439,6 +591,7 @@ class IBKRGatewayClient(BrokerClient):
         contracts: int,
         limit_credit: float,
         order_ref: str = "",
+        account: str = "",
     ) -> str:
         """Roll = BAG combo:BUY 旧 call(平仓)+ SELL 新 call(开仓),net credit 限价。
 
@@ -448,6 +601,7 @@ class IBKRGatewayClient(BrokerClient):
         from ib_async import ComboLeg, Contract, LimitOrder, Option
 
         ib = self._ensure()
+        self._require_order_account(account)
         old = Option(ticker, old_expiry.strftime("%Y%m%d"), old_strike, "C", "SMART")
         new = Option(ticker, new_expiry.strftime("%Y%m%d"), new_strike, "C", "SMART")
         ib.qualifyContracts(old, new)
@@ -463,7 +617,7 @@ class IBKRGatewayClient(BrokerClient):
             ],
         )
         order = LimitOrder("BUY", contracts, -abs(limit_credit),
-                           tif="DAY", orderRef=order_ref)
+                           tif="DAY", orderRef=order_ref, account=account)
         trade = ib.placeOrder(combo, order)
         ib.sleep(3)
         status = trade.orderStatus.status
