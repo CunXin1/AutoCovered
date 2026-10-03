@@ -1,7 +1,7 @@
 ---
 name: covered-call
-description: Analyze the current covered call book's state, decide which calls to
-  sell (opening research), and write the conclusions into a position report
+description: Analyze the current covered call book's state, pick the call to sell for
+  every uncovered holding, and write the conclusions into a position report
   automatically. Use when asked to look at positions, analyze a ticker, make an
   opening decision, ask about historical P&L, or produce a position report.
   (Roll/breach response and the scheduled jobs — daily briefing, intraday patrol,
@@ -15,8 +15,11 @@ user in an interactive session**. Three duties:
 
 1. **Analyze the current book** — what state each live short leg is in, where the
    risk sits, which day the decision point falls on
-2. **Say which calls to sell** — which uncovered stock should be written against,
-   at what strike, and which ones should not be written this round
+2. **Pick the call to sell** — every uncovered holding gets a contract (strike /
+   expiry / contracts / limit). **Sell by default**: running this skill means
+   selling calls, so the research only decides how far out the strike goes and how
+   many contracts — it never outputs 'sell / don't sell'. Risk is expressed through
+   distance and size, not by abstaining
 3. **Write the report** — every substantive analysis is archived to disk (the next
    section is a hard rule)
 
@@ -77,8 +80,10 @@ strike, % of max profit, engine verdict, whether coverage is sufficient), then:
 ## 2. Uncovered stock: which calls to sell
 An overview table (account / ticker / shares / contracts available / spot / cost /
 earnings date / long-term date), then per ticker a candidate shortlist plus the
-earnings-rule result (strike floor, historical breach rate, annualized, spread).
-State plainly which to sell and which to skip this round, with the reason.
+earnings-rule result (strike floor, historical breach rate, annualized, spread) and
+the **recommended contract** (strike / expiry / contracts / limit). Every holding
+gets a conclusion; where a dimension would once have argued for abstaining (IV at
+its yearly low, say), state the cost instead of switching to 'don't sell'.
 
 ## 3. Ledger track record
 The output of `python -m src.stats`, with both the round and the roll-chain views
@@ -171,16 +176,24 @@ execution timing (if nothing can be placed after hours, say so).
 4. `python -m src.data.earnings_moves TICKER [--strike K] [--lookback N]`
    — historical earnings-reaction moves and the per-strike historical breach rate.
    **The sole source of numbers for pricing an earnings crossing**
-5. `python -m src.stats [--ticker X] [--json] [--all]` — historical P&L
+5. `python -m src.data.market_context TICKER [TICKER...] [--json]` — IV Rank and
+   percentile, IV/HV, 52-week high-low and position in range, 1/3/6-month returns,
+   consensus analyst target. **The sole source of numbers for research dimensions
+   1/4/5/6** (never take these from WebSearch: third-party IV Rank for the same
+   name can differ 5x — see dimension 1 of strike-research.en.md)
+6. `python -m src.stats [--ticker X] [--json] [--all]` — historical P&L
    (round-level + roll-chain level, with data-quality tiers; by default only
    rounds opened after stats.since). **The only permitted reader of
    state/ledger.db; direct SQL is forbidden**
-6. `python -m src.reconcile --flex` — backfill historical fills from the IBKR Flex
+7. `python -m src.reconcile --flex` — backfill historical fills from the IBKR Flex
    report (the API returns only the current day's executions, so anything from a
    downtime window can only come from the report; `--apply` writes to the ledger)
-7. WebSearch — only for news and event context (explaining price moves, verifying
-   earnings dates, implied move), never for prices
-8. Background: `covered call strategy.md` (strategy rationale),
+8. WebSearch — **narrative fact only**: why it moved, what the catalyst is,
+   verifying an earnings date, the rough size of an implied move. No number that
+   feeds a decision threshold may come from WebSearch (prices, delta, annualized,
+   IV percentiles, 52-week highs and analyst targets all have deterministic
+   sources above)
+9. Background: `covered call strategy.md` (strategy rationale),
    `config/settings.yaml` (current thresholds)
 
 ### Data freshness
@@ -213,9 +226,9 @@ of the report needs a conclusion)
 3. **9-dimension research**: read `references/strike-research.en.md` and follow it
    strictly — IV level, earnings/events, ex-dividend, technical resistance, trend
    state, analyst targets, cost basis & taxes, liquidity, annualized floor. Vote
-   per dimension and output the decision table; **"skip this round" is a
-   legitimate and frequently correct conclusion**. Delta is the starting point,
-   not the answer.
+   per dimension (↑strike / ↓DTE / fewer contracts / neutral only) and output the
+   decision table. Delta is the starting point, not the answer; **every holding
+   must land on a specific contract**.
 4. **Create the proposal once the user picks** (the only entry point; placing
    orders directly or hand-editing proposals.json are both forbidden):
    `python -m src.execution.propose TICKER --strike <K> --expiry <YYYY-MM-DD>

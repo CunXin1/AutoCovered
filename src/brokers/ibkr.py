@@ -455,7 +455,32 @@ class IBKRGatewayClient(BrokerClient):
         }
 
     @_heals_connection
-    @_heals_connection
+    def vol_history(self, ticker: str, what: str = "OPTION_IMPLIED_VOLATILITY",
+                    duration: str = "1 Y") -> list[tuple]:
+        """正股的波动率日线 [(date, close)]。
+
+        what="OPTION_IMPLIED_VOLATILITY" 给期权隐含波动率序列(IV Rank/百分位的原料),
+        "HISTORICAL_VOLATILITY" 给已实现波动率(算 IV/HV 比)。
+        注意:这两个 whatToShow 只对**正股**合约有效 —— 对单个期权合约请求会返回
+        Error 162(实测 2026-10-02),所以 IV 分位只能在标的层面算。
+        """
+        from ib_async import Stock
+
+        ib = self._ensure()
+        stock = Stock(ticker, "SMART", "USD")
+        if not [c for c in ib.qualifyContracts(stock) if c]:
+            return []
+        bars = ib.reqHistoricalData(
+            stock, endDateTime="", durationStr=duration, barSizeSetting="1 day",
+            whatToShow=what, useRTH=True)
+        out = []
+        for b in bars or []:
+            d = b.date if isinstance(b.date, date) else b.date.date()
+            v = _safe(b.close)
+            if v:
+                out.append((d, v))
+        return out
+
     @_heals_connection
     def daily_bars(self, ticker: str, duration: str = "3 Y") -> list[tuple]:
         """正股日线序列 [(date, high, low, close)],一次请求覆盖多年。
@@ -478,6 +503,7 @@ class IBKRGatewayClient(BrokerClient):
             out.append((d, _safe(b.high), _safe(b.low), _safe(b.close)))
         return out
 
+    @_heals_connection
     def quote_option_rth(self, ticker: str, strike: float, expiry: date, *,
                          window_min: int = 60,
                          exclude_last_min: int = 5) -> Optional[dict]:
@@ -525,6 +551,7 @@ class IBKRGatewayClient(BrokerClient):
             "window": f"{sel[0].date:%H:%M}–{sel[-1].date:%H:%M} ET {sel[0].date:%Y-%m-%d}",
         }
 
+    @_heals_connection
     def quote_stock(self, ticker: str) -> Optional[float]:
         """正股实时现价(次级持仓源无腿标的的重定价)。"""
         from ib_async import Stock

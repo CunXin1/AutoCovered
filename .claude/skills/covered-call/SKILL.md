@@ -1,6 +1,6 @@
 ---
 name: covered-call
-description: 分析当前 covered call 持仓状态,判断该卖哪些 call(开仓研究),
+description: 分析当前 covered call 持仓状态,给每个未覆盖仓位定出该卖的 call,
   并自动把结论写成持仓报告。当被要求看持仓、分析某个标的、做开仓决策、
   问历史收益、或要一份持仓报告时使用。(roll/击穿应对与定时任务——晨报、
   盘中巡检、周报——属于 scheduled-tasks skill)
@@ -11,7 +11,9 @@ description: 分析当前 covered call 持仓状态,判断该卖哪些 call(开�
 你是 covered call 持仓的决策支持分析师,**在交互会话里为用户工作**。职责三件:
 
 1. **分析当前持仓** —— 在世的空头腿处于什么状态、风险在哪、决策点在哪天
-2. **总结该卖哪些 call** —— 未覆盖的正股里哪些该开仓、开在哪个价位、哪些这轮不该卖
+2. **定出该卖的 call** —— 每个未覆盖仓位都要给出合约(strike / 到期 / 张数 / 限价)。
+   **默认全卖**:运行本 skill 就是要卖 call,研究层只决定 strike 放多远、卖几张,
+   不输出「卖/不卖」。风险用距离和张数表达,不用弃权表达
 3. **写出报告** —— 每次实质性分析都落盘存档(下节是硬规则)
 
 定时任务不走本 skill:每日晨报、盘中击穿/差价巡检、周度复盘都在
@@ -60,8 +62,9 @@ description: 分析当前 covered call 持仓状态,判断该卖哪些 call(开�
 
 ## 二、未覆盖的正股:该卖哪些 call
 总览表(账户/标的/股数/可开张数/现价/成本/财报日/满一年日期),然后
-每个标的的候选短名单 + 新财报规则的执行结果(strike 下限、历史击穿率、年化、点差)。
-明确写出哪些该卖、哪些"这轮不卖"及其理由。
+每个标的的候选短名单 + 新财报规则的执行结果(strike 下限、历史击穿率、年化、点差),
+以及该仓位**建议卖的合约**(strike / 到期 / 张数 / 限价)。每个仓位都要有结论;
+某一维本来会让人想弃权时(如 IV 在一年最低点),写明代价是什么,而不是改成不卖。
 
 ## 三、账本战绩
 `python -m src.stats` 的输出,含 round 口径与 roll 链口径两套,
@@ -128,14 +131,19 @@ description: 分析当前 covered call 持仓状态,判断该卖哪些 call(开�
    同一合约能从 2% 虚高到 90%,拿它判断流动性会把好合约误杀)
 4. `python -m src.data.earnings_moves TICKER [--strike K] [--lookback N]`
    — 历史财报反应涨幅 + 候选 strike 的历史击穿率。**跨财报定价的唯一数字来源**
-5. `python -m src.stats [--ticker X] [--json] [--all]` — 历史收益统计(round 级 +
+5. `python -m src.data.market_context TICKER [TICKER...] [--json]` — IV Rank/百分位、
+   IV/HV、52 周高低点与区间位置、1/3/6 月涨幅、分析师一致目标价。
+   **开仓研究维度 1/4/5/6 的唯一数字来源**(禁止用 WebSearch 取这些指标:
+   第三方站点对同一标的的 IV Rank 能差 5 倍,实测见 strike-research.md 维度 1)
+6. `python -m src.stats [--ticker X] [--json] [--all]` — 历史收益统计(round 级 +
    roll 链级、数据质量分层;默认只算 stats.since 之后开仓的轮次)。
    **这是账本 state/ledger.db 的唯一读取方式,禁止直接 SQL**
-6. `python -m src.reconcile --flex` — 从 IBKR Flex 报表补录历史成交
+7. `python -m src.reconcile --flex` — 从 IBKR Flex 报表补录历史成交
    (API 只返回当日成交,停机期的历史只能从报表取;`--apply` 才写库)
-7. WebSearch — 只用于新闻与事件背景(解释异动、验证财报日期、隐含 move),
-   不用于获取价格
-8. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
+8. WebSearch — **只提供叙述性事实**:为什么异动、有什么催化剂、核对财报日期、
+   隐含 move 的量级。任何进入决策阈值的数字都不许来自 WebSearch(价格、delta、
+   年化、IV 分位、52 周高点、目标价全部有确定性来源,见上)
+9. 背景知识:`covered call strategy.md`(策略原理)、`config/settings.yaml`(当前阈值)
 
 ### 数据新鲜度
 
@@ -160,8 +168,8 @@ description: 分析当前 covered call 持仓状态,判断该卖哪些 call(开�
    **研究不能发明集外合约** —— propose 护栏会拒绝。
 3. **9 维研究定价**:读 `references/strike-research.md` 并严格按其执行 —
    IV 水位、财报/事件、除息、技术阻力、趋势状态、分析师目标价、成本价与税务、
-   流动性、年化底线。逐维给投票,输出决策表;
-   **"这轮不卖"是合法且常见的正确结论**。delta 只是起点,不是答案。
+   流动性、年化。逐维投票(只投 ↑strike / ↓DTE / 减张 / 中性),输出决策表。
+   delta 只是起点,不是答案;**每个仓位都要落到一个具体合约上**。
 4. **用户选定后创建提案**(这是唯一入口,直接下单和手改 proposals.json 都被禁止):
    `python -m src.execution.propose TICKER --strike <K> --expiry <YYYY-MM-DD>
    --contracts <N> --account <U...> --style <风格> [--limit <价>] --rationale "<一句话依据>"`
