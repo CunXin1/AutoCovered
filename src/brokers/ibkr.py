@@ -296,7 +296,8 @@ class IBKRGatewayClient(BrokerClient):
 
     @_heals_connection
     def fetch_chain(
-        self, ticker: str, min_dte: int, max_dte: int
+        self, ticker: str, min_dte: int, max_dte: int,
+        max_strikes_per_expiry: int = 80
     ) -> tuple[float, list[ChainQuote]]:
         from ib_async import Option, Stock
 
@@ -304,7 +305,13 @@ class IBKRGatewayClient(BrokerClient):
         stock = Stock(ticker, "SMART", "USD")
         ib.qualifyContracts(stock)
         [st] = ib.reqTickers(stock)
-        price = _safe(st.marketPrice()) or _safe(st.close)
+        # 与 fetch_positions 同一套兜底:盘后快照常只给 NaN(且每轮失败的标的随机),
+        # 没有现价整个期权链就拉不出来 —— 收盘后用官方日线收盘价才是对的口径
+        price = _safe(st.marketPrice()) or _safe(st.last) or _safe(st.close)
+        if not price:
+            price = self._last_daily_close(stock)
+            if price:
+                log.info("%s 快照无现价,期权链改用官方日线收盘价 %.2f", ticker, price)
         if not price:
             raise RuntimeError(f"{ticker} 无法获取现价")
 
@@ -321,8 +328,13 @@ class IBKRGatewayClient(BrokerClient):
             d = datetime.strptime(e, "%Y%m%d").date()
             if min_dte <= (d - today).days <= max_dte:
                 expiries.append(e)
-        # 只看 OTM 到 +25% 的 strike(covered call 只关心这段)
-        strikes = [k for k in sorted(p.strikes) if price <= k <= price * 1.25]
+        # 全部 OTM strike,不设距离上限。这里曾经砍在 +25%,那是把策略判断写进了
+        # 数据层:高 IV 标的上 delta 0.08–0.15 的合法 strike 本来就在 25% 之外,
+        # 结果 NOW/CRWV 返回"没有候选",其实是"没扫到"(实测 2026-10-02)。
+        # 筛选交给引擎的 delta 区间,数据层只负责把链取全。
+        # max_strikes_per_expiry 纯粹是请求量上限(靠近现价优先),不含策略含义。
+        otm = [k for k in sorted(p.strikes) if k >= price]
+        strikes = sorted(otm[:max_strikes_per_expiry])
 
         contracts = [
             Option(ticker, e, k, "C", "SMART", tradingClass=p.tradingClass)
