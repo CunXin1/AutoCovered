@@ -5,6 +5,7 @@ requests>=2.31
 pandas>=2.0
 pandas_market_calendars>=4.3
 yfinance>=0.2.40
+lxml>=5.0            # yfinance 读历史财报日需要
 
 # 测试
 pytest>=8.0

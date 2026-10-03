@@ -110,3 +110,42 @@ def test_empty_ledger(tmp_path):
     md = render_markdown(compute_stats(lg.conn))
     assert "账本为空" in md
     lg.close()
+
+
+# ---------------------------------------------------------------- 口径起点
+
+def test_since_filters_whole_rounds_only(tmp_path):
+    """起点过滤按轮次开仓时间,不能把一轮切成半截(否则只剩平仓腿,盈亏反号)。"""
+    from src.engine.lifecycle import BUY_TO_CLOSE, SELL_TO_OPEN, TradeEvent
+    from src.ledger import Ledger
+    from src.stats import compute_stats
+
+    lg = Ledger(tmp_path / "l.db")
+    old_open = TradeEvent(exec_id="o1", ts="2026-02-23T09:42:00+00:00", ticker="AMD",
+                          action=SELL_TO_OPEN, strike=207.5, expiry=date(2026, 2, 27),
+                          contracts=1, price=1.71, fees=1.05, source="flex",
+                          price_quality="exact")
+    old_close = TradeEvent(exec_id="c1", ts="2026-02-25T11:02:00+00:00", ticker="AMD",
+                           action=BUY_TO_CLOSE, strike=207.5, expiry=date(2026, 2, 27),
+                           contracts=1, price=7.54, fees=1.05, source="flex",
+                           price_quality="exact")
+    new_open = TradeEvent(exec_id="o2", ts="2026-07-13T13:32:00+00:00", ticker="CRWV",
+                          action=SELL_TO_OPEN, strike=145.0, expiry=date(2026, 8, 21),
+                          contracts=1, price=0.66, fees=0.79, source="flex",
+                          price_quality="exact")
+    new_close = TradeEvent(exec_id="c2", ts="2026-07-15T12:39:00+00:00", ticker="CRWV",
+                           action=BUY_TO_CLOSE, strike=145.0, expiry=date(2026, 8, 21),
+                           contracts=1, price=0.29, fees=0.79, source="flex",
+                           price_quality="exact")
+    lg.apply([old_open, old_close, new_open, new_close])
+
+    full = compute_stats(lg.conn)
+    assert set(full["tickers"]) == {"AMD", "CRWV"}
+    assert full["total"]["excluded_rounds"] == 0
+
+    scoped = compute_stats(lg.conn, since="2026-07-09")
+    assert set(scoped["tickers"]) == {"CRWV"}
+    assert scoped["total"]["excluded_rounds"] == 1
+    # 整轮剔除:CRWV 这轮 +0.66-0.29 = +0.37/股 ×100 − 手续费
+    assert scoped["total"]["realized"] == round((0.66 - 0.29) * 100 - 0.79 - 0.79, 2)
+    lg.close()

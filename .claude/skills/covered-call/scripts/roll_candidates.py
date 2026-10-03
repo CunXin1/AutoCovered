@@ -33,11 +33,24 @@ def main() -> int:
                     help="开仓风格预设(settings.yaml styles 段,如 conservative/aggressive;"
                          "per-ticker 覆盖仍是硬上限)")
     ap.add_argument("--top", type=int, default=5)
+    ap.add_argument("--rth", action=argparse.BooleanOptionalAction, default=None,
+                    help="用 RTH 收盘前窗口报价重算候选(盘后默认开;盘中默认关)")
+    ap.add_argument("--rth-window", type=int, default=60,
+                    help="RTH 窗口分钟数,从收盘前算起(默认 60,剔除最后 5 分钟)")
     args = ap.parse_args()
     ticker = args.ticker.upper()
 
     cfg = load_config()
     roll_cfg = RollConfig.from_dict(cfg.get("roll"))
+    use_rth = args.rth
+    if use_rth is None:
+        from src.market_hours import is_market_open_now
+
+        try:
+            use_rth = not is_market_open_now((cfg.get("watcher") or {}).get(
+                "calendar", "NYSE"))
+        except Exception:
+            use_rth = False
     try:
         qcc_cfg = ticker_qcc(cfg, ticker, style=args.style)
     except ValueError as e:
@@ -73,10 +86,9 @@ def main() -> int:
             lo, hi = qcc_cfg.min_open_dte, qcc_cfg.min_open_dte + 30
         price, chain = client.fetch_chain(ticker, lo, hi)
     except Exception as e:
+        client.disconnect()
         print(f"错误: 无法从 IB Gateway 获取期权链({e})。请确认 Gateway 在线且已登录。")
         return 1
-    finally:
-        client.disconnect()
 
     today = date.today()
     if args.mode == "roll":
@@ -110,6 +122,42 @@ def main() -> int:
               f"{qcc_cfg.target_delta_min:g}–{qcc_cfg.target_delta_max:g},"
               f"覆盖比例 {qcc_cfg.coverage_ratio:g}{style_txt})\n")
 
+    # ---- 盘后:用 RTH 收盘前窗口报价重算(frozen 快照的点差是收盘残留,不可信)
+    rth_note = ""
+    if use_rth and cands:
+        from src.engine.roll import ChainQuote
+
+        rth_quotes, window = [], ""
+        for c in cands:
+            q = client.quote_option_rth(ticker, c.strike, c.expiry,
+                                        window_min=args.rth_window)
+            if q is None:
+                continue
+            window = window or q["window"]
+            rth_quotes.append(ChainQuote(expiry=c.expiry, strike=c.strike,
+                                         bid=q["bid"], ask=q["ask"], delta=c.delta))
+        if rth_quotes:
+            # 现价也换成官方 RTH 收盘价,与期权报价同口径
+            rth_price = client.quote_stock(ticker) or price
+            kw = dict(stock_price=rth_price, chain=rth_quotes, today=today,
+                      earnings_date=earnings, top_n=args.top)
+            if args.mode == "roll":
+                call = (entry or {}).get("call")
+                recomputed = find_roll_candidates(
+                    current_mid=call["mid"], current_strike=call["strike"],
+                    cfg=roll_cfg, **kw)
+            else:
+                recomputed = find_open_candidates(qcc=qcc_cfg, **kw)
+            if recomputed:
+                price, chain, cands = rth_price, rth_quotes, recomputed
+                rth_note = (f"报价口径:**RTH 收盘前窗口 {window}** 的 BID_ASK 中位数"
+                            f"(剔除最后 5 分钟)。盘后 frozen 快照的点差是收盘残留,"
+                            f"会把好合约误判成流动性差。")
+            else:
+                rth_note = ("⚠️ 用 RTH 窗口报价重算后,候选全部不再满足过滤条件"
+                            "(净 credit/delta 上限)—— 盘后快照本身偏乐观。")
+    client.disconnect()
+
     if not cands:
         print("没有满足过滤条件的候选(net credit / DTE 窗口 / OTM / delta 上限)。")
         return 0
@@ -134,6 +182,8 @@ def main() -> int:
               f"权利金含事件溢价,财报 gap 风险必须在分析层显式定价。")
     print("注:net credit = 新腿 mid − 旧腿买回 mid;年化 = net_credit/现价 × 365/DTE;"
           "点差% =(ask−bid)/mid,>10% 视为流动性差。")
+    if rth_note:
+        print(f"注:{rth_note}")
     return 0
 
 

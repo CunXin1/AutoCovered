@@ -12,6 +12,9 @@
   推断价不冒充真实成交(CONFIRM <trade_id> @<价> 可修正)
 - assigned 附 upside_forgone =(到期收盘 − strike)×100×张数,
   只展示不计入盈亏(被叫走本来就是策略设计的一部分)
+- 口径起点:默认只统计 settings.yaml 的 stats.since 之后开仓的轮次
+  (本项目启用前的手动交易不算这套系统的战绩)。--all 看全部历史;
+  账本数据本身永不删除,这里只是展示过滤。
 """
 from __future__ import annotations
 
@@ -41,15 +44,24 @@ def _round_cash(trades: list[sqlite3.Row]) -> float:
     return round(cash, 2)
 
 
-def compute_stats(conn: sqlite3.Connection, ticker: str | None = None) -> dict:
+def compute_stats(conn: sqlite3.Connection, ticker: str | None = None,
+                  since: str | None = None) -> dict:
     conn.row_factory = sqlite3.Row
     where, args = "", []
     if ticker:
         where, args = " WHERE ticker=?", [ticker.upper()]
-    rounds = conn.execute(f"SELECT * FROM rounds{where} ORDER BY id", args).fetchall()
+
+    all_rounds = conn.execute(f"SELECT * FROM rounds{where} ORDER BY id", args).fetchall()
+    # 起点过滤按 round 的开仓时间:一轮要么整轮算要么整轮不算,
+    # 不能按单笔 trade 切,否则会出现"只有平仓腿"的半截轮次把盈亏算反
+    rounds = [r for r in all_rounds
+              if not since or (r["opened_ts"] or "") >= since]
+    kept = {r["id"] for r in rounds}
+    excluded = len(all_rounds) - len(rounds)
+
     trades_by_round: dict[int, list[sqlite3.Row]] = defaultdict(list)
     for t in conn.execute(f"SELECT * FROM trades{where} ORDER BY id", args):
-        if t["round_id"] is not None:
+        if t["round_id"] is not None and t["round_id"] in kept:
             trades_by_round[t["round_id"]].append(t)
 
     # ---- round 级
@@ -133,6 +145,8 @@ def compute_stats(conn: sqlite3.Connection, ticker: str | None = None) -> dict:
         "closed_chains": len(closed_chains),
         "chain_wins": sum(1 for c in closed_chains if c["cash"] > 0),
         "upside_forgone": round(sum(t["upside_forgone"] for t in tickers.values()), 2),
+        "excluded_rounds": excluded,
+        "since": since or "",
     }
     return {"tickers": tickers, "chains": chain_stats, "total": total}
 
@@ -140,8 +154,14 @@ def compute_stats(conn: sqlite3.Connection, ticker: str | None = None) -> dict:
 def render_markdown(stats: dict) -> str:
     tk, total = stats["tickers"], stats["total"]
     out = ["# Covered Call 收益统计(来源:state/ledger.db,确定性计算)", ""]
+    if total.get("since"):
+        out.append(f"口径:只统计 {total['since']} 之后开仓的轮次"
+                   + (f",已排除更早的 {total['excluded_rounds']} 轮"
+                      "(本系统启用前的手动交易;`--all` 可看全部)"
+                      if total.get("excluded_rounds") else "")
+                   + "\n")
     if not tk:
-        out.append("账本为空 — 还没有任何入账交易。")
+        out.append("该口径下没有轮次。" if total.get("since") else "账本为空 — 还没有任何入账交易。")
         return "\n".join(out)
     out += ["| Ticker | 已了结轮 | 实现盈亏 | 胜率(轮) | 进行中 | 进行中净现金 | 结局分布 |",
             "|---|---|---|---|---|---|---|"]
@@ -173,7 +193,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ticker", default=None)
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--db", default=None, help="账本路径(默认 state/ledger.db)")
+    ap.add_argument("--since", default=None,
+                    help="只统计该日期之后开仓的轮次;缺省读 settings.yaml 的 stats.since")
+    ap.add_argument("--all", action="store_true", dest="show_all",
+                    help="不做起点过滤,统计账本里的全部历史")
     args = ap.parse_args(argv)
+
+    since = None
+    if not args.show_all:
+        since = args.since
+        if since is None:
+            from src.config import load_config
+
+            since = ((load_config().get("stats") or {}).get("since") or "") or None
 
     db = Path(args.db) if args.db else STATE_DIR / "ledger.db"
     if not db.exists():
@@ -181,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)   # 只读打开
     try:
-        stats = compute_stats(conn, ticker=args.ticker)
+        stats = compute_stats(conn, ticker=args.ticker, since=since)
     finally:
         conn.close()
     print(json.dumps(stats, ensure_ascii=False, indent=2) if args.as_json
