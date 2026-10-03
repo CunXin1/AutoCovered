@@ -38,3 +38,6 @@ Thumbs.db
 
 # 秘密文件
 .env
+
+# IBKR Flex 接入说明(含 token,勿提交)
+IBKR-FLEX.md
