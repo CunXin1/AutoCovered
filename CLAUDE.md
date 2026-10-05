@@ -38,7 +38,8 @@ Covered call 监控 + 半自动执行系统。架构:Python watcher 管数字,Cl
 
 - `python -m pytest` — 引擎测试
 - `python -m src.watcher --once` — 单轮冒烟/刷数据(需 IB Gateway;只读,不写账本)
-- `python -m src.run_task daily|weekly [--force]` — 晨报/周报
+- `python -m src.run_task daily|weekly|patrol [--force]` — 晨报/周报/盘中巡检
+- `deploy/macos/install.sh [status|restart|stop|start|run T]` — Mac mini launchd 常驻部署
 - `python .claude/skills/covered-call/scripts/roll_candidates.py TICKER [--mode open] [--style conservative|aggressive]`
 - `python -m src.execution.propose TICKER --strike K --expiry D --contracts N [--style S]` — 开仓提案(推手机批准)
 - `python -m src.data.earnings_moves TICKER [--strike K]` — 历史财报涨幅 +

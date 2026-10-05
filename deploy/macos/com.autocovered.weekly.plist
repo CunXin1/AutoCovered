@@ -3,20 +3,22 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- 模板:__REPO__ 由 install.sh 替换 -->
     <key>Label</key><string>com.autocovered.weekly</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/env</string>
-        <string>python3</string>
-        <string>-m</string>
+        <string>/bin/bash</string>
+        <string>__REPO__/deploy/macos/run.sh</string>
         <string>src.run_task</string>
         <string>weekly</string>
     </array>
-    <key>WorkingDirectory</key><string>/PATH/TO/AutoCovered</string>
+    <key>WorkingDirectory</key><string>__REPO__</string>
     <!-- 周日 18:00 本地时间 -->
     <key>StartCalendarInterval</key>
-    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-    <key>StandardOutPath</key><string>/PATH/TO/AutoCovered/state/weekly.log</string>
-    <key>StandardErrorPath</key><string>/PATH/TO/AutoCovered/state/weekly.log</string>
+    <array>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+    <key>StandardOutPath</key><string>__REPO__/state/logs/weekly.log</string>
+    <key>StandardErrorPath</key><string>__REPO__/state/logs/weekly.log</string>
 </dict>
 </plist>

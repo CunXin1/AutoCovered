@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 可选:用 IBC 登录即自动启动 IB Gateway(install.sh --with-ibc 才装)。
+         IBC 自己负责每日自动重启;每周一次的 2FA 仍需在 IBKR Mobile 上点确认。 -->
+    <key>Label</key><string>com.autocovered.ibgateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__IBC_START__</string>
+        <string>-inline</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <!-- 异常退出才拉起;间隔 5 分钟,避免登录失败时反复触发 2FA -->
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>ThrottleInterval</key><integer>300</integer>
+    <key>StandardOutPath</key><string>__REPO__/state/logs/ibgateway.log</string>
+    <key>StandardErrorPath</key><string>__REPO__/state/logs/ibgateway.log</string>
+</dict>
+</plist>

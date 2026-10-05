@@ -3,18 +3,22 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- 模板:__REPO__ 由 install.sh 替换,不要手改后直接 cp -->
     <key>Label</key><string>com.autocovered.watcher</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/env</string>
-        <string>python3</string>
-        <string>-m</string>
+        <string>/bin/bash</string>
+        <string>__REPO__/deploy/macos/run.sh</string>
         <string>src.watcher</string>
     </array>
-    <key>WorkingDirectory</key><string>/PATH/TO/AutoCovered</string>
+    <key>WorkingDirectory</key><string>__REPO__</string>
+    <!-- 常驻:登录即起,崩了就拉起(最多每 30 秒一次,防 Gateway 未就绪时狂刷) -->
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/PATH/TO/AutoCovered/state/watcher.stdout.log</string>
-    <key>StandardErrorPath</key><string>/PATH/TO/AutoCovered/state/watcher.stderr.log</string>
+    <key>ThrottleInterval</key><integer>30</integer>
+    <key>ProcessType</key><string>Interactive</string>
+    <!-- 业务日志在 state/watcher.log;这里只兜底启动期崩溃 -->
+    <key>StandardOutPath</key><string>__REPO__/state/logs/watcher.launchd.log</string>
+    <key>StandardErrorPath</key><string>__REPO__/state/logs/watcher.launchd.log</string>
 </dict>
 </plist>

@@ -1,7 +1,8 @@
 # 部署指南
 
-核心代码纯跨平台,只有调度层分平台。三个任务:
-watcher(常驻)、daily(交易日 6:15)、weekly(周日 18:00)。
+核心代码纯跨平台,只有调度层分平台。任务:
+watcher(常驻)、daily(交易日 6:15)、weekly(周日 18:00);
+macOS 另有 patrol(盘中巡检)。
 时间按太平洋时间设计(6:15 PT = 9:15 ET,美国夏令时同步切换);
 `run_task daily` 内部有交易日门禁,调度器可以无脑触发。
 
@@ -15,17 +16,16 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\register_tasks.ps1
 - 电源设置里关闭盘中自动休眠(设置 → 系统 → 电源)
 - 用虚拟环境时改脚本里的 `$Python` 为完整路径
 
-## macOS(headless Mac 迁移目标)
+## macOS(Mac mini 常驻，推荐)
 
 ```bash
-# 1. 把三个 plist 里的 /PATH/TO/AutoCovered 替换为实际路径
-# 2. 安装
-cp deploy/macos/*.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.autocovered.*.plist
-# 卸载: launchctl unload ~/Library/LaunchAgents/com.autocovered.*.plist
+deploy/macos/install.sh            # 预检 + .venv + pytest + 注册 launchd(幂等)
+deploy/macos/install.sh status
 ```
 
-注意:headless Mac 需在"节能"里关闭睡眠;IB Gateway 建议配 IBC 自动重登。
+多一个盘中巡检任务 `patrol`(交易日 07:00/09:00/11:00/12:30 PT)。
+系统设置、IB Gateway/IBC、Claude 无人值守登录、运维与排障见
+[`macos/README.md`](macos/README.md)。
 
 ## 方式二:Claude Code 定时任务(推荐,在窗口里管理)
 
