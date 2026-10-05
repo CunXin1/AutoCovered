@@ -39,12 +39,16 @@ sync when a rule changes.)
 **Every substantive analysis must also be written to a report file, without
 waiting to be asked.**
 
-- Path: `state/analysis/YYYY-MM-DD-positions-report.md` (**re-running on the same
-  day overwrites it** — no pile of files; find history by date)
-- A single ticker's 9-dimension opening decision table goes separately to
-  `state/analysis/YYYY-MM-DD-<TICKER>-open-research.md` (see the synthesis
-  procedure, step 5, in `references/strike-research.en.md`), and the position
-  report cites its conclusion
+- **One analysis = one file.** The path is always
+  `state/analysis/YYYY-MM-DD-positions-report.md`, and **re-running on the same day
+  overwrites it**; find history by date
+- **Never write per-ticker side files** (`*-<TICKER>-open-research.md` and the like).
+  A single ticker's 9-dimension opening decision table is **section 3** of this
+  report, written out in full inside it — one analysis scattered across seven or
+  eight md files goes unread and cannot be compared
+- **Read `references/report-template.en.md` before writing**, and follow its skeleton
+  (section order, what each section must contain, and the finishing self-check live
+  there). This file sets the rules; the template sets the format
 - Give the file path in your answer; do **not** restate the whole document in
   chat — chat carries the conclusion and key numbers, the file carries the detail
 
@@ -53,51 +57,6 @@ ticker, a position health check, a P&L review.
 **What does not**: single-fact questions ("how far is NVDA from its strike?",
 "what did CRWV make in the ledger?") — answer directly, write no file, or
 `state/analysis/` fills up with trivia.
-
-### Report structure (the position report always follows this)
-
-```
-# Position analysis <YYYY-MM-DD> (<intraday / after close / weekend>)
-
-**<one-sentence summary, conclusion first>**
-
-## Data basis
-Snapshot time and data source; whether spot came from the snapshot or the official
-daily close; whether option quotes are live or from the RTH pre-close window; which
-script each historical-earnings / P&L figure came from. Without stating the basis,
-none of the numbers can be re-checked.
-
-## 1. Live short legs
-A table per leg (stock cost/spot, leg strike/expiry/premium/mid, Δ/DTE/distance to
-strike, % of max profit, engine verdict, whether coverage is sufficient), then:
-- Whether to act now (against the 50% take-profit line, the 21-DTE wrap-up date,
-  the tested/roll thresholds)
-- Risk points (earnings crossing, ex-div early assignment, whether delta has
-  drifted past the band it was opened in)
-- Which day the decision point is, and the three-option framework to compare then
-- Tax: days to long-term treatment, whether being called away is short or long term
-
-## 2. Uncovered stock: which calls to sell
-An overview table (account / ticker / shares / contracts available / spot / cost /
-earnings date / long-term date), then per ticker a candidate shortlist plus the
-earnings-rule result (strike floor, historical breach rate, annualized, spread) and
-the **recommended contract** (strike / expiry / contracts / limit). Every holding
-gets a conclusion; where a dimension would once have argued for abstaining (IV at
-its yearly low, say), state the cost instead of switching to 'don't sell'.
-
-## 3. Ledger track record
-The output of `python -m src.stats`, with both the round and the roll-chain views
-plus data-quality tiers. If a big single-round loss was offset by the credit from a
-same-day roll, explain that explicitly.
-
-## 4. Data problems (if any)
-Conflicting bases, missing subscriptions, past exposures the user should know
-about. Omit the section when there are none.
-
-## 5. Open decisions and next steps
-What the user has to decide, which research dimensions are still missing, and the
-execution timing (if nothing can be placed after hours, say so).
-```
 
 ## Request routing
 

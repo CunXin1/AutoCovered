@@ -192,5 +192,7 @@ roll 的新腿本质也是选合约,但不是 9 维全跑:
   对同一指标给出的值可以差 5 倍(见维度 1 的实测)。
 - 研究结论必须落在候选集内;想要集外合约 = 回去改 --style 或改 config,
   不是绕护栏。
-- 决策表全文存档到 `state/analysis/YYYY-MM-DD-<TICKER>-open-research.md`,
-  推送手机时正文即决策表摘要。
+- 决策表全文写进**当次持仓报告的第三节**
+  (`state/analysis/YYYY-MM-DD-positions-report.md`,骨架见
+  `report-template.md`)。**不再按标的另存 `*-<TICKER>-open-research.md`** ——
+  一次分析只产出一个文件。scheduled-tasks 推送手机时,正文取该节的决策表摘要。

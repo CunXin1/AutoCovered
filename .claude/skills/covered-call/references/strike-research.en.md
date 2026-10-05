@@ -261,6 +261,8 @@ A roll's new leg is also contract selection, but not all 9 dimensions run:
   differ by 5x on the same metric (see dimension 1).
 - Research conclusions must land inside the candidate set; wanting an outside
   contract = go change --style or config, not bypass the guardrail.
-- Archive the full decision table to
-  `state/analysis/YYYY-MM-DD-<TICKER>-open-research.md`; the phone push body is
-  the table's summary.
+- Write the full decision table into **section 3 of that run's position report**
+  (`state/analysis/YYYY-MM-DD-positions-report.md`; skeleton in
+  `report-template.en.md`). **No more per-ticker
+  `*-<TICKER>-open-research.md` files** — one analysis produces one file. When
+  scheduled-tasks pushes to the phone, the body is that section's table summary.
