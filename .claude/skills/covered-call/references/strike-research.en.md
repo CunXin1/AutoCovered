@@ -144,24 +144,35 @@ No dimension votes "don't sell".
   below it → ↑strike or cut contracts; targets being cut / catalyst vacuum → a
   nearer strike within the band is fine, collect more premium.
 
-## 7. Cost basis and taxes (your own ledger — nobody else's)
+## 7. Cost basis (tax is disclosed, it does not vote)
 
-- **Check**: strike vs cost basis; days to long-term capital gains; the lot's
-  tax status.
-- **Source**: positions.json stock.avg_cost and metrics.days_to_long_term —
-  the only source.
-- **Rule (disclosure; relaxed from a hard ban on 2026-07-13)**:
-  strike ≤ avg_cost is **allowed** (underwater recovery mode), at the price of
-  showing the **locked-in-loss math** in the conclusion: if called away,
-  per-share locked loss = avg_cost − strike − cumulative premiums collected;
-  state the net result. For equal premium prefer the highest strike that still
-  clears dimension 9's floor; on underwater names weight dimension 5's vote
-  (rebound risk) heavily — a rebound through a low strike turns a paper loss
-  into a realized one; if planning to re-buy after assignment, flag the 30-day
-  wash-sale window. days_to_long_term < DTE with a sizable unrealized gain →
-  assignment converts long-term rates to short-term → ↑strike (and consider
-  fewer contracts) so the odds of assignment before the line stay minimal;
-  QCC (OTM + DTE > 30) is engine-enforced.
+**Revised 2026-10-05: tax drops from a voting dimension to a disclosure one.** Why:
+**every assignment produces a capital gain**, and that is equally true of every strike
+in the candidate set, so it cannot tell you which one to pick. Meanwhile "avoid being
+called away" is already what dimensions 1/2/4/5/6 (assignment probability) vote on —
+letting tax vote again counts the same worry twice and turns the report into a tax
+ledger. **This dimension now carries only two things:**
+
+- **Still a hard rule: the cost line.** strike ≤ avg_cost is **allowed** (underwater
+  recovery mode), at the price of showing the **locked-in-loss math** in the
+  conclusion: per-share locked loss = avg_cost − strike − cumulative premiums
+  collected; state the net result. That is P&L, not tax, and **is not relaxed here**.
+  For equal premium prefer the highest strike that still clears dimension 9's floor;
+  on underwater names weight dimension 5's vote (rebound risk) heavily — a rebound
+  through a low strike turns a paper loss into a realized one. **Mind FIFO**: IBKR
+  delivers the oldest lot first, so a strike above the weighted-average cost can still
+  lock a loss on the earliest lot (lots come from the Flex report's LOT-level holdings).
+- **Demoted to one line of disclosure: tax.** Gain if called away ((strike − cost) ×
+  shares) and its short/long-term character get **one column in the report's overview
+  table plus one line in the summary** — no section of their own, no paragraphs, and no
+  repetition under each ticker. If a re-buy is planned after assignment, flag the
+  30-day wash-sale window in one clause.
+- **Vote**: this dimension votes **"disclosure"** (equivalent to neutral) by default,
+  never ↑strike. **The one exception**: `days_to_long_term < DTE`, i.e. the long-term
+  line falls inside this leg's life — then the tax rate genuinely differs by outcome
+  ("called away = short term, survive past the line = long term") and it may cast one
+  ↑strike vote. That case is rare (the line usually sits far beyond a 46-day DTE);
+  do not manufacture it. QCC (OTM + DTE > 30) is engine-enforced.
 
 ## 8. Liquidity (you need to get out, not just in)
 

@@ -13,6 +13,45 @@ is the **writing requirement** (delete the italic line itself from the report).
 Sections with nothing to say: section 5 (data problems) may be omitted entirely;
 every other section must be present, even if it only says "nothing this round".
 
+## Length budget (hard rule)
+
+The report is meant to be read, not filed. **Run `wc -l` when you finish; if it is
+over, cut.**
+
+- **350 lines maximum** for the whole file (table rows included). Measured baseline:
+  6 uncovered tickers + 1 live leg = 348 lines (the 2026-10-05 report). With more
+  tickers, allow **+28 lines per extra ticker**, with a **hard ceiling of 450**
+- **Section 3: 28 lines per ticker.** Within those 28, the 9-dimension table (11
+  lines) and the candidate table (5–7) are the **floor** and do not compress; save
+  space on prose instead (conclusion / synthesis / counter-case / cost / earnings
+  disclosure ≤ 5 lines in total, one line each)
+- Ceilings elsewhere: summary ≤ 20 · data basis ≤ 10 (at most 5 bullets) · each live
+  leg in section 1 ≤ 40 · section 2 ≤ 40 · section 4 ≤ 18 · section 5 ≤ 12 ·
+  section 6 ≤ 45
+- Priority when it will not fit (highest first): **summary table > section 2's number
+  tables > section 3's 9-dimension tables > prose**
+- **State each fact once**: contracts / sizes / limits / annualized already in the
+  summary table are referenced, not repeated, in sections 2 and 3; section 2 carries
+  **no separate "recommended contracts" table** (the summary table at the top is it);
+  in section 1 the discipline lines and the decision dates go in **one** table
+  (threshold / current value / what to do that day), not two
+- **Tax gets one column and one line, never a section**: gain if called away and its
+  short/long-term character go in the last two columns of section 2's overview table,
+  one line for the total, one line in the summary — no paragraphs and no repetition per
+  ticker (it is identical for every candidate)
+- **Never restate this skill's rule text** in the report ("rule: IVR<20 → ↑strike +
+  reduce size" and the like). Write only what was found and decided for this ticker —
+  the rules live in the skill, and the reader does not need to learn them twice
+- 9-dimension table: **one sentence per cell** in the Finding column; the Vote column
+  is the vote name plus a parenthetical of at most six words
+- Candidate table: keep **the chosen row + 2–4 comparison rows** (keep 1–2 of the rows
+  vetoed by dimension 8, marked ❌, so the reader sees how narrow the choice was) —
+  not the script's whole output pasted in
+- Three-option, decision-point and open-decision tables: **one sentence per cell**
+- **Consecutive prose lines become `- ` bullets**, never a stacked paragraph: adjacent
+  `**Synthesis**:` / `**Counter-case**:` lines without bullets render as one run-on
+  paragraph and the reader cannot tell them apart
+
 ---
 
 ```
@@ -20,6 +59,26 @@ every other section must be present, even if it only says "nothing this round".
 
 **<one-sentence summary, conclusion first: what happens to the live legs + how many
 contracts this round, premium, coverage>**
+
+## Summary: what to sell this round
+
+*The first table in the file, straight after the one-sentence summary and **before
+anything else**. It is the list of recommended contracts — section 2 does not repeat
+it. The three bullets after it are one line each.*
+
+| Ticker | Contract | Qty (account) | Limit (mid) | Δ | Annualized |
+|---|---|---|---|---|---|
+| <TICKER> | <EXPIRY> **$<K>** C | <n> (<U...>) | **<limit>** | <delta> | <%> |
+
+**<N> contracts total · about $<total> in premium · covering <x>/<y> shares (<%>)**
+
+**Live legs**: <TICKER> <N>×<K>C <EXPIRY> — <state>, next decision point <date>
+(<event>), <act / stand pat> this week.
+
+- **Best of the round**: <ticker + annualized + one-clause reason>
+- **The one to watch**: <ticker + why (with numbers) + what was done about it
+  (↑strike / reduced size)>
+- **Cost if everything is called away**: <total capital gain + short/long term>
 
 ## Data basis
 
@@ -78,9 +137,9 @@ with `roll_candidates.py <TICKER>`):
 *The three options are a hard requirement: never default to recommending a roll —
 being called away is part of the strategy's design.*
 
-**Tax note (dimension 7)**: *Acquisition date, days_to_long_term, the one-year date;
-whether expiry falls before or after the long-term line; whether there is a "wait X
-more days to cross" window worth protecting.*
+*Tax: one sentence per option in the Tax column of the three-option table above, and
+**no separate "tax note" block**. Only `days_to_long_term < DTE` (the long-term line
+falling inside this leg's life) earns an extra line.*
 
 > When it is actually time to act (roll / buy back), switch to the
 > **scheduled-tasks skill**. This section is status analysis only.
@@ -89,9 +148,15 @@ more days to cross" window worth protecting.*
 
 ### Overview
 
-| Account | Ticker | Shares | Contracts available | Spot | Cost | Unrealized | Earnings | One-year date |
+| Account | Ticker | Shares | Spot | Cost | Unrealized | Earnings | One year (left) | Gain if called |
 |---|---|---|---|---|---|---|---|---|
-| <U...> | <TICKER> | <qty> | <n> | <price> | <avg_cost> | <%> | <date> | <date (N days left) / unknown> |
+| <U...> | <TICKER> | <qty> | <price> | <avg_cost> | <%> | <date> | <date (N)> / unknown | +$<amt> (short/long) |
+
+*Those last two columns are **all** the space dimension 7 gets: gain if called away
+plus its short/long-term character. At most **one** further line after the table for
+the total (capital gain if everything is called away, and its character) — **no
+paragraph**: every assignment produces a capital gain, equally true of every candidate,
+so it is not a selection criterion.*
 
 ### Earnings-rule result
 
@@ -108,23 +173,18 @@ or sources disagree → treat the whole window as mined, take the furthest strik
 fewer contracts, and note it here. For candidates expiring before earnings, write
 "n/a (expiry precedes <earnings date>)" in the breach column.*
 
-### Recommended contracts
+### Compliance and underwater check
 
-| # | Account | Ticker | Contract | Qty | Limit (mid) | Δ | Annualized | Spread | Premium | Earnings |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | <U...> | <TICKER> | <EXPIRY> **$<K>** C | <n> | **<limit>** | <delta> | <%> | <%> | $<amt> | ⚠️<date> / — |
-
-**<N> contracts in total, about $<total> in premium; covering <x> / <y> shares (<%>).**
-*State QCC compliance (all OTM + DTE > 30); check every line for strike ≤ avg_cost,
-and where one exists give the **lock-in-loss arithmetic** here (per-share lock-in =
-avg_cost − strike − premium collected to date, with the FIFO-lot caveat). If there
-are none, write explicitly "no underwater strikes this round".*
-
-### Tax if called away (dimension 7)
-
-| Account | Ticker | strike − cost | Shares | Capital gain | Character |
-|---|---|---|---|---|---|
-| <U...> | <TICKER> | <K> − <cost> | <qty> | +$<amt> | short term (N days left) / long term / **holding period unknown** |
+*The contract list lives in the summary table at the top; **do not repeat it here**.
+This subsection carries only three things, at most 2 lines each:*
+- *QCC compliance statement: all OTM + opening DTE > 30 (give the nearest strike's
+  distance to spot and its DTE)*
+- *If the whole book's expiry/spread choice shares one reason (e.g. all standard
+  monthlies), state it **once** here; section 3 does not repeat it*
+- *Check every line for strike ≤ avg_cost: where one exists give the **lock-in-loss
+  arithmetic** (per-share lock-in = avg_cost − strike − premium collected to date,
+  with the FIFO-lot caveat); if there are none, one line saying "no underwater
+  strikes this round"*
 
 ## 3. Per-ticker 9-dimension decision tables
 
@@ -160,7 +220,7 @@ in the table so the choice set stays visible.*
 | 4 | Resistance / 52-week high | <52-week range / distance from high / range position / where the strike sits vs resistance> | market_context | <> |
 | 5 | Trend state | <1/3/6-month momentum plus range position, interpreted> | market_context | <> |
 | 6 | Analyst target | <consensus target / distance / coverage count / rating; flag ⚠️ above 20%> | market_context | <> |
-| 7 | Cost basis & tax | <strike vs avg_cost / gain if called / days_to_long_term> | positions.json | <> |
+| 7 | Cost basis (tax disclosed only) | <strike vs avg_cost; underwater → locked-in-loss math, otherwise one clause "+x% above cost"> | positions.json | **disclosure** (unless days_to_long_term < DTE) |
 | 8 | Liquidity | <spread per row; >10% switch to adjacent or the standard monthly, >20% do not touch> | candidate table | <> |
 | 9 | Annualized floor | <chosen row's annualized vs the best in the set vs the 4% floor> | candidate table | <> |
 
@@ -219,6 +279,11 @@ Give the fix for each (usually `reconcile --flex`).*
 
 ## Self-check before finishing the report
 
+- [ ] **The whole file is ≤ 350 lines** (actually count it: `wc -l`; +28 per extra ticker, hard ceiling 450); if over, cut prose first
+- [ ] **The summary table is at the very top** (right after the one-sentence summary),
+      and sections 2 and 3 do not repeat contracts / sizes / limits
+- [ ] The report does **not** restate the skill's rule text — only findings and
+      conclusions for these tickers
 - [ ] Exactly **one** file written, at `state/analysis/YYYY-MM-DD-positions-report.md`
 - [ ] First line is the one-sentence summary; the chat answer is also a one-sentence
       summary + key numbers + the file path, **not a restatement of the document**
@@ -229,6 +294,8 @@ Give the fix for each (usually `reconcile --flex`).*
       rate, not an estimate
 - [ ] Any strike ≤ avg_cost carries the lock-in-loss arithmetic (with the FIFO
       caveat); if there are none, say so explicitly
+- [ ] Tax appears only as one overview-table column plus one summary/total line —
+      **no tax section and no tax paragraphs**
 - [ ] Live legs come with the three-option framework, with no default roll recommendation
 - [ ] Every number traces back to positions.json or a deterministic script;
       WebSearch only supplied narrative facts

@@ -47,8 +47,20 @@ waiting to be asked.**
   report, written out in full inside it — one analysis scattered across seven or
   eight md files goes unread and cannot be compared
 - **Read `references/report-template.en.md` before writing**, and follow its skeleton
-  (section order, what each section must contain, and the finishing self-check live
-  there). This file sets the rules; the template sets the format
+  (section order, what each section must contain, the length budget, and the finishing
+  self-check live there). This file sets the rules; the template sets the format
+- **Put the summary table at the very top**: after the one-sentence summary and before
+  anything else, the first table is this round's "what to sell" contract list (ticker /
+  contract / qty (account) / limit / Δ / annualized) plus a totals line, a one-line
+  live-leg status, and three bullets (best of the round / the one to watch / cost if
+  everything is called away). That table *is* the recommendation list — **sections 2
+  and 3 do not repeat it**
+- **The whole file is ≤ 350 lines** (tables included; the measured baseline for 6
+  tickers + 1 live leg is 348 lines, +28 per extra ticker, hard ceiling 450). A report
+  is meant to be read, not filed: run `wc -l` when you finish, and if it is over, cut
+  prose and never the number tables. **Never restate this skill's rule text in the report** (write only
+  what was found and decided for these tickers), and state each fact once. The
+  per-section budget lives in the template's "Length budget" section
 - Give the file path in your answer; do **not** restate the whole document in
   chat — chat carries the conclusion and key numbers, the file carries the detail
 
@@ -108,8 +120,18 @@ ticker, a position health check, a P&L review.
   (details: references/strike-research.en.md, dimension 2)
 - Management discipline: take profit at 50–75% of max profit, or wrap up at
   21 DTE, whichever comes first
-- For stock held under a year, the report must state "X days to long-term
-  treatment" (metrics.days_to_long_term)
+- **Tax is disclosed, it does not pick the strike** (2026-10-05): every assignment
+  produces a capital gain, equally true of every strike in the candidate set, so it is
+  not a selection criterion — **the goal is simply not to be called away**, and that
+  goal is already expressed by the assignment-probability dimensions (IV / historical
+  earnings moves / resistance / trend / price target). The disclosure format is fixed:
+  gain if called away and its short/long-term character (including
+  `metrics.days_to_long_term`'s "N days left") get **one column in the overview table
+  plus one line in the summary** — no section of their own, no multi-paragraph tax
+  ledger. Exception: when `days_to_long_term < DTE` (the long-term line falls inside
+  this leg's life) the rate really does depend on the outcome, and only then may it
+  influence the strike. **The cost line / locked-in-loss math is not relaxed by this**
+  (that is P&L, not tax)
 - **Every roll/buyback recommendation must present three options: roll / buy to
   close / let the stock be called away**, each with its numbers, tax impact and
   counterargument. Being called away is part of the strategy's design — never
@@ -236,7 +258,8 @@ output of `python -m src.stats`, and:
 - Language: follow the language the user asked in
 - Keep the chat answer short: conclusion + key numbers + report path; detail goes
   in the report, never restated wholesale in chat
-- Every recommendation carries: the numbers behind it + tax impact (QCC /
-  short vs long-term capital gains) + the counterargument
+- Every recommendation carries: the numbers behind it + the counterargument (tax is
+  not repeated per recommendation — it lives in that one overview-table column; QCC
+  compliance is stated once in section 2)
 - You are decision support, not a command line: trades only happen through the
   proposal-approval flow or the user acting manually
